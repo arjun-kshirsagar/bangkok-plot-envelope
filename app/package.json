@@ -1,0 +1,40 @@
+{
+  "name": "app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@deck.gl/core": "^9.4.1",
+    "@deck.gl/layers": "^9.4.1",
+    "@deck.gl/mapbox": "^9.4.1",
+    "@turf/turf": "^7.4.0",
+    "maplibre-gl": "^5.24.1",
+    "polygon-clipping": "^0.15.7",
+    "proj4": "^2.23.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "terra-draw": "^1.40.0",
+    "terra-draw-maplibre-gl-adapter": "^1.5.0",
+    "zustand": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/geojson": "^7946.0.16",
+    "@types/node": "^24.19.2",
+    "@types/proj4": "^2.5.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "oxlint": "^1.90.0",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.6",
+    "vitest": "^5.1.1"
+  }
+}
