@@ -4,11 +4,12 @@
  */
 import { MapboxOverlay } from '@deck.gl/mapbox'
 import type { Layer } from '@deck.gl/core'
-import { PolygonLayer } from '@deck.gl/layers'
+import { PathLayer, PolygonLayer } from '@deck.gl/layers'
 import type { MultiPolygon, Polygon, Position } from 'geojson'
 import type { IControl, Map as MapLibreMap } from 'maplibre-gl'
 import type { PipelineResult, StageId } from '../engine/pipeline'
 import type { StageVisibility } from '../store/useAppStore'
+import type { Design } from '../designs/types'
 
 export function createOverlay(map: MapLibreMap): MapboxOverlay {
   const overlay = new MapboxOverlay({ interleaved: true, layers: [] })
@@ -41,6 +42,8 @@ function toData(geometry: Polygon | MultiPolygon | null): PolyDatum[] {
 export interface OverlayOptions {
   /** MapLibre layer id to insert the flat layers before (e.g. the first symbol layer). */
   beforeId?: string
+  /** When a concept design is drawn inside it, the envelope volume becomes a faint reference. */
+  envelopeFaded?: boolean
 }
 
 export function buildPipelineLayers(result: PipelineResult, visibility: StageVisibility, options: OverlayOptions = {}): Layer[] {
@@ -99,7 +102,7 @@ export function buildPipelineLayers(result: PipelineResult, visibility: StageVis
           extruded: true,
           wireframe: true,
           getElevation: heightM,
-          getFillColor: STAGE_COLORS.envelope.fill,
+          getFillColor: options.envelopeFaded ? [59, 130, 246, 28] : STAGE_COLORS.envelope.fill,
           getLineColor: STAGE_COLORS.envelope.line,
           material: { ambient: 0.55, diffuse: 0.6, shininess: 20, specularColor: [80, 80, 80] },
           pickable: false,
@@ -108,5 +111,64 @@ export function buildPipelineLayers(result: PipelineResult, visibility: StageVis
       )
     }
   }
+  return layers
+}
+
+export const DESIGN_FILL: Rgba = [222, 142, 84, 235]
+export const DESIGN_LINE: Rgba = [110, 60, 25, 255]
+
+interface FloorLine {
+  path: [number, number, number][]
+}
+
+/** Selected design as solid extruded blocks with a floor line at every storey. */
+export function buildDesignLayers(design: Design | null, options: OverlayOptions = {}): Layer[] {
+  if (!design) return []
+  const placement: { beforeId?: string } = { beforeId: options.beforeId }
+  const layers: Layer[] = []
+  const floorLines: FloorLine[] = []
+  design.blocks.forEach((b, i) => {
+    layers.push(
+      new PolygonLayer<PolyDatum>({
+        id: `design-block-${b.id}-${i}`,
+        data: [{ rings: b.footprintGeo.coordinates }],
+        getPolygon: (d) => d.rings,
+        filled: true,
+        stroked: false,
+        extruded: true,
+        wireframe: false,
+        // Blocks are drawn from the ground up; a tower's lower part is hidden inside the podium.
+        getElevation: b.topM,
+        getFillColor: DESIGN_FILL,
+        getLineColor: DESIGN_LINE,
+        material: { ambient: 0.5, diffuse: 0.65, shininess: 24, specularColor: [60, 50, 40] },
+        pickable: false,
+        ...placement,
+      }),
+    )
+    const outer = b.footprintGeo.coordinates[0]
+    for (let f = 0; f <= b.floors; f++) {
+      const z = b.baseM + f * design.floorToFloorM
+      if (z <= 0.01) continue
+      for (const ring of b.footprintGeo.coordinates) {
+        floorLines.push({ path: ring.map((p) => [p[0], p[1], z] as [number, number, number]) })
+      }
+    }
+    void outer
+  })
+  layers.push(
+    new PathLayer<FloorLine>({
+      id: 'design-floor-lines',
+      data: floorLines,
+      getPath: (d) => d.path,
+      getColor: DESIGN_LINE,
+      getWidth: 1,
+      widthUnits: 'pixels',
+      widthMinPixels: 1,
+      pickable: false,
+      parameters: { depthCompare: 'less-equal' },
+      ...placement,
+    }),
+  )
   return layers
 }

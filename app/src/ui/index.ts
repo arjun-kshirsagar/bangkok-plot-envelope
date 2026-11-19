@@ -1,4 +1,5 @@
 export { SidePanel } from './SidePanel'
 export { Legend } from './Legend'
 export { ErrorBoundary } from './ErrorBoundary'
+export { DesignsPanel } from './DesignsPanel'
 export * from './format'

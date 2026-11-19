@@ -91,3 +91,44 @@ export function ringCentroid(ring: Position[]): XY {
   }
   return [cx / (3 * a), cy / (3 * a)]
 }
+
+/** Perimeter of a ring (closed or open). */
+export function ringPerimeter(ring: Position[]): number {
+  const pts = dropClosingPoint(ring)
+  let sum = 0
+  for (let i = 0; i < pts.length; i++) sum += segmentLength(pts[i], pts[(i + 1) % pts.length])
+  return sum
+}
+
+/** Shortest distance between two segments a1-a2 and b1-b2 (planar). */
+export function segmentToSegmentDistance(a1: Position, a2: Position, b1: Position, b2: Position): number {
+  if (segmentsIntersect(a1, a2, b1, b2)) return 0
+  return Math.min(
+    pointToSegmentDistance(a1, b1, b2),
+    pointToSegmentDistance(a2, b1, b2),
+    pointToSegmentDistance(b1, a1, a2),
+    pointToSegmentDistance(b2, a1, a2),
+  )
+}
+
+function orient(a: Position, b: Position, c: Position): number {
+  return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+}
+
+export function segmentsIntersect(a1: Position, a2: Position, b1: Position, b2: Position): boolean {
+  const d1 = orient(b1, b2, a1)
+  const d2 = orient(b1, b2, a2)
+  const d3 = orient(a1, a2, b1)
+  const d4 = orient(a1, a2, b2)
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+}
+
+/** Shortest distance from any edge of a ring to a segment. */
+export function ringToSegmentDistance(ring: Position[], a: Position, b: Position): number {
+  const pts = dropClosingPoint(ring)
+  let best = Infinity
+  for (let i = 0; i < pts.length; i++) {
+    best = Math.min(best, segmentToSegmentDistance(pts[i], pts[(i + 1) % pts.length], a, b))
+  }
+  return best
+}

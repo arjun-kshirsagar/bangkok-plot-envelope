@@ -11,6 +11,7 @@
 import type { Polygon } from 'geojson'
 import { validatePlot } from '../engine/plot'
 import { isBuildingType, type BuildingType } from '../rules'
+import { DESIGN_IDS, type DesignId, type DesignOverrides } from '../designs/types'
 import type { MapView } from './types'
 import { DEFAULT_FLOOR_TO_FLOOR_M, DEFAULT_ROAD_WIDTH_M, FLOOR_TO_FLOOR_RANGE, useAppStore, type AppState } from './useAppStore'
 
@@ -21,6 +22,13 @@ export interface UrlScene {
   buildingType: BuildingType | null
   floorToFloorM: number | null
   view: MapView | null
+  /** Selected design and its overrides (`design=`, `dfl=` floors, `nosb=1` ignore setbacks). */
+  design: DesignId | null
+  designOverrides: DesignOverrides | null
+}
+
+function isDesignId(v: unknown): v is DesignId {
+  return typeof v === 'string' && (DESIGN_IDS as readonly string[]).includes(v)
 }
 
 /** Accepted coordinate window: greater Bangkok. */
@@ -46,6 +54,9 @@ export function encodeScene(scene: UrlScene): string {
   if (scene.roadWidthM !== null) params.set('road', fmt(scene.roadWidthM, 2))
   if (scene.buildingType) params.set('type', scene.buildingType)
   if (scene.floorToFloorM !== null) params.set('f2f', fmt(scene.floorToFloorM, 2))
+  if (scene.design) params.set('design', scene.design)
+  if (scene.designOverrides?.floors !== undefined) params.set('dfl', String(scene.designOverrides.floors))
+  if (scene.designOverrides?.ignoreSetbacks) params.set('nosb', '1')
   if (scene.view) {
     const v = scene.view
     params.set('view', [fmt(v.zoom, 2), fmt(v.lat, 6), fmt(v.lng, 6), fmt(v.pitch, 1), fmt(v.bearing, 1)].join('/'))
@@ -57,7 +68,7 @@ export function encodeScene(scene: UrlScene): string {
 export function decodeScene(hash: string): UrlScene {
   const raw = hash.startsWith('#') ? hash.slice(1) : hash
   const params = new URLSearchParams(raw)
-  const scene: UrlScene = { plot: null, frontEdgeIndex: null, roadWidthM: null, buildingType: null, floorToFloorM: null, view: null }
+  const scene: UrlScene = { plot: null, frontEdgeIndex: null, roadWidthM: null, buildingType: null, floorToFloorM: null, view: null, design: null, designOverrides: null }
 
   const plot = params.get('plot')
   if (plot) {
@@ -97,6 +108,16 @@ export function decodeScene(hash: string): UrlScene {
     if (Number.isFinite(v) && v >= FLOOR_TO_FLOOR_RANGE[0] && v <= FLOOR_TO_FLOOR_RANGE[1]) scene.floorToFloorM = v
   }
 
+  const design = params.get('design')
+  if (isDesignId(design)) {
+    scene.design = design
+    const ov: DesignOverrides = {}
+    const dfl = params.get('dfl')
+    if (dfl !== null && /^\d{1,3}$/.test(dfl) && Number(dfl) >= 1) ov.floors = Number(dfl)
+    if (params.get('nosb') === '1') ov.ignoreSetbacks = true
+    if (Object.keys(ov).length) scene.designOverrides = ov
+  }
+
   const view = params.get('view')
   if (view) {
     const parts = view.split('/').map(Number)
@@ -133,6 +154,10 @@ export function hydrateStoreFromUrl(): void {
   }
   if (scene.roadWidthM !== null) patch.roadWidthSource = { kind: 'link', detail: 'Restored from the shared link.' }
   if (scene.buildingType) patch.buildingType = scene.buildingType
+  if (scene.design) {
+    patch.selectedDesignId = scene.design
+    if (scene.designOverrides) patch.designOverrides = { [scene.design]: scene.designOverrides }
+  }
   useAppStore.getState().hydrate(patch)
 }
 
@@ -153,6 +178,8 @@ export function startUrlSync(debounceMs = 250): () => void {
       buildingType: s.buildingType,
       floorToFloorM: s.floorToFloorM,
       view: s.view,
+      design: s.plot ? s.selectedDesignId : null,
+      designOverrides: s.plot ? (s.designOverrides[s.selectedDesignId] ?? null) : null,
     })
     const next = hash ? `#${hash}` : ''
     if (window.location.hash !== next) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${next}`)
@@ -164,7 +191,9 @@ export function startUrlSync(debounceMs = 250): () => void {
       state.roadWidthM === prev.roadWidthM &&
       state.buildingType === prev.buildingType &&
       state.floorToFloorM === prev.floorToFloorM &&
-      state.view === prev.view
+      state.view === prev.view &&
+      state.selectedDesignId === prev.selectedDesignId &&
+      state.designOverrides === prev.designOverrides
     )
       return
     if (timer) clearTimeout(timer)

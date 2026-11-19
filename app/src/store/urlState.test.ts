@@ -24,6 +24,8 @@ describe('URL scene state', () => {
       buildingType: 'lowRiseResidential',
       floorToFloorM: 3.2,
       view: { zoom: 16.5, lat: 13.737, lng: 100.561, pitch: 55, bearing: 340 },
+      design: 'podiumTower',
+      designOverrides: { floors: 15, ignoreSetbacks: true },
     }
     const hash = encodeScene(scene)
     expect(hash).toContain('plot=')
@@ -37,6 +39,8 @@ describe('URL scene state', () => {
     expect(back.buildingType).toBe('lowRiseResidential')
     expect(back.floorToFloorM).toBe(3.2)
     expect(back.view).toEqual(scene.view)
+    expect(back.design).toBe('podiumTower')
+    expect(back.designOverrides).toEqual({ floors: 15, ignoreSetbacks: true })
   })
 
   it('ignores garbage and returns an empty scene', () => {
@@ -47,6 +51,7 @@ describe('URL scene state', () => {
     expect(back.buildingType).toBeNull()
     expect(back.floorToFloorM).toBeNull()
     expect(back.view).toBeNull()
+    expect(decodeScene('#design=castle&dfl=3').design).toBeNull()
   })
 
   it('rejects plots outside Bangkok, self-intersecting plots and out-of-range front indices', () => {
@@ -72,6 +77,6 @@ describe('URL scene state', () => {
   })
 
   it('encodes nothing for an empty scene', () => {
-    expect(encodeScene({ plot: null, frontEdgeIndex: null, roadWidthM: null, buildingType: null, floorToFloorM: null, view: null })).toBe('')
+    expect(encodeScene({ plot: null, frontEdgeIndex: null, roadWidthM: null, buildingType: null, floorToFloorM: null, view: null, design: null, designOverrides: null })).toBe('')
   })
 })

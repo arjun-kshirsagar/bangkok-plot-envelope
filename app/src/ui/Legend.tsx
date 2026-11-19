@@ -25,6 +25,9 @@ export function Legend() {
           <div className="legend-row">
             <span className="swatch stage-envelope" /> Buildable envelope
           </div>
+          <div className="legend-row">
+            <span className="swatch design" /> Selected concept design
+          </div>
         </>
       )}
       <div className="legend-row">

@@ -4,13 +4,13 @@ import type { LngLatBoundsLike, MapMouseEvent } from 'maplibre-gl'
 import { nearestEdge, plotEdges } from '../engine/plot'
 import type { LngLat } from '../engine/projection'
 import { ZONE_BBOX } from '../rules'
-import { selectPipeline, useAppStore } from '../store'
+import { selectPipeline, selectSelectedDesign, useAppStore } from '../store'
 import { DEFAULT_ROAD_WIDTH_M } from '../store/useAppStore'
 import { startBuildingHeightCheck } from './buildings'
 import { createDrawController } from './draw'
 import { createEdgeHighlighter } from './frontEdge'
 import { ensureBuildings3D, firstSymbolLayerId, INITIAL_VIEW, metresPerPixel, STYLE_URL } from './mapStyle'
-import { buildPipelineLayers, createOverlay } from './overlay'
+import { buildDesignLayers, buildPipelineLayers, createOverlay } from './overlay'
 import { resolveRoadWidth } from './roads'
 import { addZoneLayers } from './zoneLayer'
 
@@ -94,7 +94,14 @@ export function MapView() {
         edges.setFront(e)
       }
       const syncOverlay = (s = store.getState()) => {
-        overlay.setProps({ layers: buildPipelineLayers(selectPipeline(s), s.stageVisibility, { beforeId }) })
+        const pipeline = selectPipeline(s)
+        const selected = selectSelectedDesign(s, pipeline)
+        overlay.setProps({
+          layers: [
+            ...buildPipelineLayers(pipeline, s.stageVisibility, { beforeId, envelopeFaded: selected !== null }),
+            ...buildDesignLayers(selected?.design ?? null, { beforeId }),
+          ],
+        })
       }
       syncFront()
       syncOverlay()
@@ -115,7 +122,9 @@ export function MapView() {
             state.roadWidthM !== prev.roadWidthM ||
             state.buildingType !== prev.buildingType ||
             state.floorToFloorM !== prev.floorToFloorM ||
-            state.stageVisibility !== prev.stageVisibility
+            state.stageVisibility !== prev.stageVisibility ||
+            state.selectedDesignId !== prev.selectedDesignId ||
+            state.designOverrides !== prev.designOverrides
           ) {
             syncOverlay(state)
           }

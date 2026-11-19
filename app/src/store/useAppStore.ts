@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { Polygon } from 'geojson'
 import { remapFrontEdge } from '../engine/plot'
 import type { StageId } from '../engine/pipeline'
+import type { DesignId, DesignOverrideMap, DesignOverrides } from '../designs/types'
 import { DEFAULT_BUILDING_TYPE, type BuildingType } from '../rules'
 import type { BuildingsSource, InteractionMode, MapView, RoadWidthSource, SceneInputs } from './types'
 
@@ -34,6 +35,8 @@ export interface AppState extends SceneInputs {
   buildingsSource: BuildingsSource
   view: MapView | null
   stageVisibility: StageVisibility
+  selectedDesignId: DesignId
+  designOverrides: DesignOverrideMap
 
   setPlot: (plot: Polygon | null) => void
   clearPlot: () => void
@@ -46,7 +49,10 @@ export interface AppState extends SceneInputs {
   setBuildingsSource: (source: BuildingsSource) => void
   setView: (view: MapView) => void
   toggleStage: (id: StageId) => void
-  hydrate: (scene: Partial<SceneInputs> & { roadWidthSource?: RoadWidthSource; view?: MapView | null }) => void
+  selectDesign: (id: DesignId) => void
+  setDesignOverride: (id: DesignId, patch: DesignOverrides) => void
+  resetDesignOverrides: (id?: DesignId) => void
+  hydrate: (scene: Partial<SceneInputs> & { roadWidthSource?: RoadWidthSource; view?: MapView | null; selectedDesignId?: DesignId; designOverrides?: DesignOverrideMap }) => void
 }
 
 const EMPTY_PLOT_STATE = {
@@ -69,6 +75,8 @@ export const useAppStore = create<AppState>()((set) => ({
   buildingsSource: 'unknown',
   view: null,
   stageVisibility: DEFAULT_STAGE_VISIBILITY,
+  selectedDesignId: 'slab',
+  designOverrides: {},
 
   setPlot: (plot) =>
     set((state) => ({
@@ -96,6 +104,24 @@ export const useAppStore = create<AppState>()((set) => ({
   setView: (view) => set({ view }),
 
   toggleStage: (id) => set((s) => ({ stageVisibility: { ...s.stageVisibility, [id]: !s.stageVisibility[id] } })),
+
+  selectDesign: (selectedDesignId) => set({ selectedDesignId }),
+
+  setDesignOverride: (id, patch) =>
+    set((s) => {
+      const next = { ...(s.designOverrides[id] ?? {}), ...patch }
+      if (next.floors === undefined) delete next.floors
+      if (!next.ignoreSetbacks) delete next.ignoreSetbacks
+      return { designOverrides: { ...s.designOverrides, [id]: next } }
+    }),
+
+  resetDesignOverrides: (id) =>
+    set((s) => {
+      if (!id) return { designOverrides: {} }
+      const copy = { ...s.designOverrides }
+      delete copy[id]
+      return { designOverrides: copy }
+    }),
 
   hydrate: (scene) => set((state) => ({ ...state, ...scene })),
 }))

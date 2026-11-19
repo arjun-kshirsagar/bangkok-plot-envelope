@@ -13,6 +13,7 @@ import {
 } from '../store'
 import { formatArea, formatLength, formatThaiLandUnits } from './format'
 import { RoadWidthInput } from './RoadWidthInput'
+import { DesignsPanel } from './DesignsPanel'
 
 const MODE_HINTS: Record<string, string> = {
   idle: 'Draw a plot to begin, or move the map with drag (rotate with right-drag or Ctrl+drag).',
@@ -280,10 +281,21 @@ export function SidePanel() {
                     <Src ids={['zone-far', 'far-counts-all-floors']} />
                   </td>
                 </tr>
+                {env.gfaCapM2 < env.maxGfaM2 - 0.5 && (
+                  <tr>
+                    <th>GFA cap applied</th>
+                    <td>
+                      {n0(env.gfaCapM2)} m² <span className="sub-inline">(MR-33 ข้อ 2 road tier)</span>
+                    </td>
+                    <td>
+                      <Src ids={['mr33-road-access']} />
+                    </td>
+                  </tr>
+                )}
                 <tr>
                   <th>GFA in envelope</th>
                   <td>
-                    {n0(env.gfaM2)} m² <span className="sub-inline">({Math.round((100 * env.gfaM2) / env.maxGfaM2)}% of cap)</span>
+                    {n0(env.gfaM2)} m² <span className="sub-inline">({Math.round((100 * env.gfaM2) / env.gfaCapM2)}% of cap)</span>
                   </td>
                   <td />
                 </tr>
@@ -363,6 +375,11 @@ export function SidePanel() {
             )}
           </>
         )}
+      </section>
+
+      <section className="section">
+        <h2>5 · Concept designs</h2>
+        <DesignsPanel />
       </section>
 
       <footer className="panel-footer">

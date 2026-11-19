@@ -61,6 +61,9 @@ export interface Envelope {
   floorsByFar: number
   /** FAR x plot area. */
   maxGfaM2: number
+  /** Effective GFA cap actually applied: FAR cap, or lower when MR-33 ข้อ 2 road tier (30,000 m2) binds. */
+  gfaCapM2: number
+  gfaCapNote: string | null
   /** maxFloors x footprint area. */
   gfaM2: number
   openSpaceM2: number
@@ -83,11 +86,27 @@ export interface RegimeSummary {
   note: string
 }
 
+/** Metric-frame (UTM 47N) geometry of the active regime, for designs and checks. */
+export interface PipelineMetric {
+  plot: MetricPolygon
+  plotAreaM2: number
+  frontEdgeIndex: number
+  frontSetbackM: number
+  boundarySetbackM: number
+  /** Plot minus the road setback strip (null if consumed). */
+  afterRoadSetback: MetricPolygon | null
+  /** Plot minus road and boundary setbacks (null if consumed). */
+  afterBoundarySetback: MetricPolygon | null
+  /** Final envelope footprint after the open-space shrink (null if consumed). */
+  footprint: MetricPolygon | null
+}
+
 export interface PipelineResult {
   /** False until a valid plot and a front edge exist. */
   ok: boolean
   stages: StageResult[]
   envelope: Envelope | null
+  metric: PipelineMetric | null
   regime: Regime
   regimeReason: string
   /** Other regimes computed for comparison (what the standard route would give, etc.). */
@@ -100,6 +119,7 @@ export const EMPTY_PIPELINE_RESULT: PipelineResult = {
   ok: false,
   stages: [],
   envelope: null,
+  metric: null,
   regime: 'standard',
   regimeReason: '',
   alternatives: [],
@@ -126,12 +146,15 @@ interface Caps {
   heightBelowM?: number
   /** Keep GFA strictly below this. */
   gfaBelowM2?: number
+  /** One-line reason shown with the FAR stage when gfaBelowM2 comes from a rule (MR-33 ข้อ 2). */
+  gfaCapNote?: string
 }
 
 interface RegimeComputation {
   regime: Regime
   stages: StageResult[]
   envelope: Envelope | null
+  metric: PipelineMetric
 }
 
 const fmt = (n: number, d = 1) => Number(n.toFixed(d)).toLocaleString('en-GB')
@@ -315,6 +338,7 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
     `Gross floor area <= FAR ${far} x ${fmt(A, 0)} m2 = ${fmt(gfaMax, 0)} m2 (BMA-CP ข้อ 17). All storeys count, parking and basements included; FAR bonuses (up to +20%) are not applied.`,
   ]
   if (regime === 'highRise') farNotes.push(`MR-33 ข้อ 5 cap of FAR ${ruleNumber(rules, 'mr33-far-cap', 'far')} does not bind (zone FAR ${far} is lower).`)
+  if (caps.gfaCapNote) farNotes.push(caps.gfaCapNote)
   stages.push({
     id: 'far',
     label: 'Floor area ratio',
@@ -371,6 +395,17 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
     sources: ['bcl-open-space-plot', 'zone-osr', 'osr-definition'],
   })
 
+  const metric: PipelineMetric = {
+    plot: ctx.plotMetric,
+    plotAreaM2: A,
+    frontEdgeIndex: ctx.frontEdgeIndex,
+    frontSetbackM: sFront,
+    boundarySetbackM: sBoundary,
+    afterRoadSetback: afterRoad.polygon,
+    afterBoundarySetback: afterBoundary.polygon,
+    footprint: footprint && F >= 1 ? footprint : null,
+  }
+
   // --- Envelope.
   if (!footprint || F < 1) {
     stages.push({
@@ -381,7 +416,7 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
       numbers: { footprintAreaM2: 0, maxFloors: 0, gfaM2: 0 },
       sources: [],
     })
-    return { regime, stages, envelope: null }
+    return { regime, stages, envelope: null, metric }
   }
 
   let floorsByFar = Math.floor(gfaMax / F + EPS)
@@ -422,6 +457,7 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
   return {
     regime,
     stages,
+    metric,
     envelope: {
       footprint: toGeoPolygon(footprint),
       footprintAreaM2: F,
@@ -431,6 +467,8 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
       floorsByHeight,
       floorsByFar,
       maxGfaM2: gfaMax,
+      gfaCapM2: caps.gfaBelowM2 !== undefined ? Math.min(gfaMax, caps.gfaBelowM2 - 1e-6) : gfaMax,
+      gfaCapNote: caps.gfaCapNote ?? null,
       gfaM2: gfa,
       openSpaceM2: openSpace,
       openSpaceRequiredM2: required,
@@ -515,28 +553,61 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
   const crossesGfa = e !== null && e.gfaM2 >= hrGfa - EPS
 
   if (canHighRise && (crossesHeight || crossesGfa)) {
-    let highRise: RegimeComputation
-    let capped: RegimeComputation
-    try {
-      highRise = computeRegime(ctx, 'highRise')
-      capped = computeRegime(ctx, 'standard', { heightBelowM: hrHeight, gfaBelowM2: hrGfa })
-    } catch (err) {
-      return geometryFailure(plot, A, err)
-    }
     const why = [
       crossesHeight ? `height ${fmt(e!.heightM)} m >= ${hrHeight} m` : null,
       crossesGfa ? `GFA ${fmt(e!.gfaM2, 0)} m2 >= ${fmt(hrGfa, 0)} m2` : null,
     ]
       .filter(Boolean)
       .join(' and ')
-    const reason = `Standard-regime envelope reaches ${why}, so the building is อาคารสูง / อาคารขนาดใหญ่พิเศษ and MR-33 applies (6 m clearance all round, road right-of-way >= 10 m with 12 m frontage, fire road). Recomputed in the high-rise regime.`
+    // MR-33 ข้อ 2 road access: no high-rise at all on a road under 10 m; GFA <= 30,000 m2 under 18 m.
+    const rowSmall = ruleNumber(rules, 'mr33-road-access', 'minRowM_gfaLe30000')
+    const rowBig = ruleNumber(rules, 'mr33-road-access', 'minRowM_gfaGt30000')
+    const tierGfa = rules.thresholds.mr33RoadTierGfaM2
+    const W = inputs.roadWidthM
+
+    if (W < rowSmall - EPS) {
+      let capped: RegimeComputation
+      try {
+        capped = computeRegime(ctx, 'standard', { heightBelowM: hrHeight, gfaBelowM2: hrGfa })
+      } catch (err) {
+        return geometryFailure(plot, A, err)
+      }
+      const reason = `Standard setbacks would reach ${why}, but an อาคารสูง / อาคารขนาดใหญ่พิเศษ needs a public road with right-of-way >= ${rowSmall} m (MR-33 ข้อ 2) and this road is ${fmt(W)} m. The envelope is therefore held under ${hrHeight} m and ${fmt(hrGfa, 0)} m2 in the standard regime.`
+      return {
+        ok: capped.envelope !== null,
+        stages: capped.stages,
+        envelope: capped.envelope,
+        metric: capped.metric,
+        regime: 'standard',
+        regimeReason: reason,
+        alternatives: [summary(standard, 'Standard setbacks, uncapped (not permitted)', `Would reach ${why}, which needs a >= ${rowSmall} m road; shown only to explain the cap.`)],
+        warnings: [...warnings, `Road right-of-way ${fmt(W)} m < ${rowSmall} m: high-rise / extra-large buildings are not permitted on this plot (MR-33 ข้อ 2).`],
+        annotations: [reason],
+      }
+    }
+
+    const hrCaps: Caps =
+      W < rowBig - EPS
+        ? { gfaBelowM2: tierGfa + 1e-6, gfaCapNote: `MR-33 ข้อ 2: a road under ${rowBig} m right-of-way (here ${fmt(W)} m) limits the building to ${fmt(tierGfa, 0)} m2 of gross floor area.` }
+        : {}
+    let highRise: RegimeComputation
+    let capped: RegimeComputation
+    try {
+      highRise = computeRegime(ctx, 'highRise', hrCaps)
+      capped = computeRegime(ctx, 'standard', { heightBelowM: hrHeight, gfaBelowM2: hrGfa })
+    } catch (err) {
+      return geometryFailure(plot, A, err)
+    }
+    const reason = `Standard-regime envelope reaches ${why}, so the building is อาคารสูง / อาคารขนาดใหญ่พิเศษ and MR-33 applies (6 m clearance all round, road right-of-way >= ${rowSmall} m with 12 m frontage, fire road). Recomputed in the high-rise regime.`
     const hrWarnings = [...warnings]
-    const minRow = ruleNumber(rules, 'mr33-road-access', highRise.envelope && highRise.envelope.gfaM2 > rules.thresholds.mr33RoadTierGfaM2 ? 'minRowM_gfaGt30000' : 'minRowM_gfaLe30000')
-    if (inputs.roadWidthM < minRow) hrWarnings.push(`High-rise access: the road right-of-way must be >= ${minRow} m (MR-33 ข้อ 2); the entered road is ${fmt(inputs.roadWidthM)} m.`)
+    if (hrCaps.gfaCapNote && highRise.envelope && highRise.envelope.floorsByFar < highRise.envelope.floorsByHeight && highRise.envelope.gfaM2 >= tierGfa - highRise.envelope.footprintAreaM2) {
+      hrWarnings.push(`GFA capped at ${fmt(tierGfa, 0)} m2 because the road is under ${rowBig} m (MR-33 ข้อ 2); a wider road would allow the full FAR ${rules.zone.far}.`)
+    }
     return {
       ok: highRise.envelope !== null,
       stages: highRise.stages,
       envelope: highRise.envelope,
+      metric: highRise.metric,
       regime: 'highRise',
       regimeReason: reason,
       alternatives: [
@@ -555,6 +626,7 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
     ok: standard.envelope !== null,
     stages: standard.stages,
     envelope: standard.envelope,
+    metric: standard.metric,
     regime: 'standard',
     regimeReason: reason,
     alternatives: [],
