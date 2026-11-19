@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import maplibregl from 'maplibre-gl'
 import type { LngLatBoundsLike, MapMouseEvent } from 'maplibre-gl'
+import type { Polygon } from 'geojson'
 import { nearestEdge, plotEdges } from '../engine/plot'
 import type { LngLat } from '../engine/projection'
 import { ZONE_BBOX } from '../rules'
@@ -13,6 +14,7 @@ import { ensureBuildings3D, firstSymbolLayerId, INITIAL_VIEW, metresPerPixel, ST
 import { buildDesignLayers, buildPipelineLayers, createOverlay } from './overlay'
 import { resolveRoadWidth } from './roads'
 import { addZoneLayers } from './zoneLayer'
+import { fitToPlot, trackTileLoading, useMapStatus } from './mapStatus'
 
 const PICK_TOLERANCE_PX = 16
 /** ~1.5 km of padding around the Y.10 sub-zones (at 13.7 N, 1 deg lng ~ 108 km, 1 deg lat ~ 110.6 km). */
@@ -48,6 +50,9 @@ export function MapView() {
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left')
 
     const cleanups: Array<() => void> = []
+    useMapStatus.getState().setMap(map)
+    cleanups.push(trackTileLoading(map))
+    cleanups.push(() => useMapStatus.getState().setMap(null))
     let roadLookup: AbortController | null = null
 
     const setCursorClasses = (picking: boolean, overEdge: boolean) => {
@@ -60,11 +65,22 @@ export function MapView() {
       store.getState().setView({ lng: c.lng, lat: c.lat, zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() })
     })
 
-    // Esc while drawing with no vertices placed: Terra Draw has nothing to cancel, so leave draw mode ourselves.
+    // Keyboard: Terra Draw only hears keys while the map canvas has focus, so Esc and Delete are
+    // also handled here (never while typing in a form control).
+    const isTyping = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+    }
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
+      if (isTyping(e.target)) return
       const s = store.getState()
-      if (s.mode === 'draw' || s.mode === 'pickFront') s.setMode('idle')
+      if (e.key === 'Escape') {
+        if (s.mode === 'draw' || s.mode === 'pickFront') s.setMode('idle')
+        else if (s.mode === 'edit') s.setMode('idle')
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && s.mode === 'edit' && s.plot) {
+        e.preventDefault()
+        s.clearPlot()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     cleanups.push(() => window.removeEventListener('keydown', onKeyDown))
@@ -76,18 +92,31 @@ export function MapView() {
       const beforeId = firstSymbolLayerId(map)
       cleanups.push(startBuildingHeightCheck(map, (src) => store.getState().setBuildingsSource(src)))
 
+      // Plots set from outside Terra Draw (example loader, link) are pushed back into it; the
+      // ones Terra Draw itself produced are remembered so dragging never re-loads the feature.
+      let lastDrawPlot: Polygon | null = null
       const draw = createDrawController(map, {
-        onPlotChange: (plot) => store.getState().setPlot(plot),
-        onDrawFinished: () => store.getState().setMode('edit'),
+        onPlotChange: (plot) => {
+          lastDrawPlot = plot
+          store.getState().setPlot(plot)
+        },
+        onDrawFinished: () => {
+          store.getState().setMode('edit')
+          fitToPlot(store.getState().plot)
+        },
         onPlotDeleted: () => store.getState().clearPlot(),
       })
       cleanups.push(() => draw.destroy())
 
       const edges = createEdgeHighlighter(map)
 
-      // Initial sync (plot may have come from the URL).
+      // Initial sync (plot may have come from the URL). Without a camera in the link, frame the plot.
       const initial = store.getState()
-      if (initial.plot) draw.loadPlot(initial.plot)
+      if (initial.plot) {
+        draw.loadPlot(initial.plot)
+        lastDrawPlot = initial.plot
+        if (!initial.view) fitToPlot(initial.plot, { duration: 0 })
+      }
       draw.setMode(initial.mode)
       const syncFront = (s = store.getState()) => {
         const e = s.plot && s.frontEdgeIndex !== null ? plotEdges(s.plot)[s.frontEdgeIndex] ?? null : null
@@ -127,6 +156,10 @@ export function MapView() {
             setCursorClasses(state.mode === 'pickFront', false)
           }
           if (state.plot !== prev.plot && state.plot === null) draw.clear()
+          if (state.plot !== prev.plot && state.plot !== null && state.plot !== lastDrawPlot) {
+            lastDrawPlot = state.plot
+            draw.loadPlot(state.plot)
+          }
           if (state.plot !== prev.plot || state.frontEdgeIndex !== prev.frontEdgeIndex) syncFront(state)
           if (
             state.plot !== prev.plot ||

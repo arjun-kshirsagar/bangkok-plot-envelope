@@ -148,29 +148,34 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
   draw.start()
   draw.setMode('static')
 
+  // Mode switches (de)select the feature, which Terra Draw reports as property 'update'
+  // changes; those must not be echoed back to the store as geometry changes.
   const setMode = (mode: InteractionMode) => {
-    switch (mode) {
-      case 'draw':
-        syncing = true
-        draw.clear()
-        syncing = false
-        currentId = null
-        draw.setMode('polygon')
-        break
-      case 'edit':
-        draw.setMode('select')
-        if (currentId !== null && draw.hasFeature(currentId)) {
-          try {
-            draw.selectFeature(currentId)
-          } catch {
-            /* feature may not be selectable yet */
+    syncing = true
+    try {
+      switch (mode) {
+        case 'draw':
+          draw.clear()
+          currentId = null
+          draw.setMode('polygon')
+          break
+        case 'edit':
+          draw.setMode('select')
+          if (currentId !== null && draw.hasFeature(currentId)) {
+            try {
+              draw.selectFeature(currentId)
+            } catch {
+              /* feature may not be selectable yet */
+            }
           }
-        }
-        break
-      case 'pickFront':
-      case 'idle':
-        draw.setMode('static')
-        break
+          break
+        case 'pickFront':
+        case 'idle':
+          draw.setMode('static')
+          break
+      }
+    } finally {
+      syncing = false
     }
   }
 
