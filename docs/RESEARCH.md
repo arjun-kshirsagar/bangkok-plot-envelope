@@ -4,12 +4,12 @@ Written 2026-11-20. Machine-readable version: `rules/bangkok-zone.json`. Sources
 
 ## 1. Which law applies in November 2026
 
-- **Zoning**: Bangkok Comprehensive Plan B.E. 2556 (2013), a ministerial regulation (Royal Gazette 16 May 2013). Its own ข้อ 1 said "five years", but the Town Planning Act (No.4) B.E. 2558 s.14 keeps existing plan regulations in force until a replacing regulation is issued, and the new s.26 has no expiry. The 4th-revision draft was approved by the Bangkok provincial committee on 9 Apr 2026 and publicly posted Aug-Nov 2026; promulgation is expected in 2027. So the 2013 plan is the law today.
+- **Zoning**: Bangkok Comprehensive Plan B.E. 2556 (2013), a ministerial regulation (Royal Gazette 16 May 2013). Its own ข้อ 1 said "five years"; the Town Planning Act (No.4) B.E. 2558 removed that expiry and carried existing plans forward (history). The Town Planning Act B.E. 2562 (in force 25 Nov 2019) then repealed the 2518 Act and its amendments, and its transitional provisions keep plans enforced by ministerial regulation before that date in force until replaced by a Ministry of Interior notification or a local ordinance; a successor Bangkok plan would be a ข้อบัญญัติกรุงเทพมหานคร (not verified from primary text). The 4th-revision draft was approved by the Bangkok provincial committee on 9 Apr 2026 and publicly posted Aug-Nov 2026; promulgation is expected in 2027. So the 2013 plan is the law today.
 - **Building envelope**: Building Control Act B.E. 2522 regulations: Ministerial Regulation No. 55 (2000, general setbacks and height), No. 33 (1992, high-rise and extra-large buildings), plus the Bangkok Building Control Bylaw B.E. 2544 (2001), which repeats the national rules and adds Bangkok-specific open-space minima.
 
 ## 2. The zone
 
-**ย.10 (Y.10), very-high-density residential, brown.** Plan ข้อ 17. Official BMA GIS sub-zones ย.10-4 to ย.10-10 cover the Sukhumvit sois from about Soi 22 to Ekkamai on both sides of Sukhumvit Road, including Phrom Phong and Thong Lo BTS. Asok itself is พ.5 (commercial, FAR 10). Map focus: sub-zone **ย.10-4** (Soi 31-55, north side), centre 100.5724 E, 13.7363 N, 2.85 km2. Boundaries come from BMA's ArcGIS service and are approximate (+/-50-100 m), not parcel-accurate.
+**ย.10 (Y.10), very-high-density residential, brown.** Plan ข้อ 17. Official BMA GIS sub-zones ย.10-4 to ย.10-10 cover the Sukhumvit sois from about Soi 22 to Ekkamai on both sides of Sukhumvit Road, including Phrom Phong and Thong Lo BTS. Asok itself is พ.5 (commercial, FAR 10). Map focus: sub-zone **ย.10-4** (Soi 31-55, north side), centre 100.5724 E, 13.7363 N, 2.85 km2. Boundaries come from BMA's ArcGIS service and are approximate (+/-50-100 m), not parcel-accurate. Geometry note for the builder: the ย.10-7 polygon (Phrom Phong / Thong Lo BTS) has an interior ring (a hole; contents not identified, probably an island of another zone), so point-in-polygon and "plot inside zone" tests must handle polygons with holes, not just exterior rings.
 
 | Item | Value | Source |
 |---|---|---|
@@ -30,6 +30,9 @@ Written 2026-11-20. Machine-readable version: `rules/bangkok-zone.json`. Sources
 6. **Floors**: floors = floor(Hmax / 3.0 m). Legal minimum floor-to-floor for dwellings is 2.60 m (MR-55 ข้อ 22); 3.0 m is our default.
 7. **Envelope** = setback footprint x height cap. **GFA** = footprint x floors, capped by FAR. **Binding rule** = whichever of height, FAR, or open space stops growth first.
 8. **Fire road** (high-rise): a 6.00 m carriageway free of overhead cover around the building (MR-33 ข้อ 3); satisfied by keeping the 6 m band unroofed.
+9. **Frontage check** (Bangkok bylaw ข้อ 52(6), ข้อ 53): a building > 2 storeys or > 8 m counts as "fronting the public way" only if its road-facing building line is longer than 1/8 of its outer perimeter and lies within 20 m of the public way; otherwise it must provide a 6 m deep front open space (12 m if > 3 storeys). Evaluated per massing, since a tower pushed to the back of a deep plot can fail it.
+10. **Indicative parking deduction** (informational): 1 space per condo unit (BMA ข้อ 84(3)); common practice 1 per unit >= 60 m2 else 1 per 120 m2 (attributed to MR No. 7, unverified). At ~30 m2 per space, parking floors eat FAR, so the UI shows "indicative saleable GFA" next to the FAR GFA.
+11. **Two blocks on one plot** (informational, MR-55 ข้อ 48): openings-to-openings walls 4 / 5 / 6 m apart by height class; only matters for twin-block templates.
 
 ## 4. Worked example: 1,600 m2 plot, 40 m x 40 m, facing a 12 m right-of-way soi, condo
 

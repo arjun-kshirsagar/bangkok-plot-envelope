@@ -3,7 +3,7 @@
     "generated": "2026-11-20",
     "status": "Research output (Phase 1). Every number cites an ID in docs/SOURCES.md plus a clause. Items with assumed=true are judgement calls logged in docs/DECISIONS.md.",
     "units": "metres, square metres, percent",
-    "planInForce": "Bangkok Comprehensive Plan B.E. 2556 (2013), Ministerial Regulation, Royal Gazette vol.130 part 41 ก, 16 May 2013. Still in force on 2026-11-20 by s.14 of the Town Planning Act (No.4) B.E. 2558 (plans remain until a replacing regulation). The 4th-revision draft is not law (expected 2027)."
+    "planInForce": "Bangkok Comprehensive Plan B.E. 2556 (2013), Ministerial Regulation, Royal Gazette vol.130 part 41 ก, 16 May 2013. Still in force on 2026-11-20: the Town Planning Act B.E. 2562 (in force 25 Nov 2019, which repealed the 2518 Act and its amendments incl. No.4/2558) carries over comprehensive plans enforced by ministerial regulation before that date until they are replaced by a Ministry of Interior notification or a local ordinance (TPA-2562 transitional provisions). The earlier No.4/2558 s.14 carry-over is history only. A successor BMA plan would be enforced by ข้อบัญญัติกรุงเทพมหานคร (not verified from primary text). The 4th-revision draft is not law (expected 2027)."
   },
   "zone": {
     "code": "Y.10",
@@ -34,6 +34,9 @@
     "highRiseHeightM": 23,
     "extraLargeGfaM2": 10000,
     "largeBuildingGfaM2": 2000,
+    "largeBuildingAltHeightM": 15,
+    "largeBuildingAltGfaM2": 1000,
+    "largeBuildingUsedBy": "mr55-road-setback (BMA-BL-2544 ข้อ 50 tier-2 trigger: a large building gets the tier-2 road setback even if <= 2 storeys and <= 8 m)",
     "mr33RoadTierGfaM2": 30000,
     "source": "MR-33 ข้อ 1 (อาคารสูง >= 23.00 m measured ground to roof-deck floor; อาคารขนาดใหญ่พิเศษ >= 10,000 m2 total or any single floor); MR-55 ข้อ 1 (อาคารขนาดใหญ่ > 2,000 m2, or >= 15 m high and > 1,000 m2); MR-33 ข้อ 2 (30,000 m2 road tier)"
   },
@@ -46,10 +49,10 @@
       "openSpacePlotPercentMin": 30,
       "assumeWallsHaveOpenings": true,
       "setbacks": {
-        "standard": { "boundaryM": 3, "boundaryIfHeightLe9mM": 2, "perimeterOpenM": 2, "roadSetbackRule": "mr55-road-setback" },
+        "standard": { "boundaryM": 3, "boundaryIfHeightLe9mM": 2, "perimeterOpenByHeight": [ { "heightMaxM": 15, "m": 1 }, { "heightMaxM": 23, "m": 2 } ], "perimeterOpenRule": "bma-perimeter-open", "roadSetbackRule": "mr55-road-setback" },
         "highRise": { "boundaryM": 6, "roadM": 6, "perimeterOpenM": 6 }
       },
-      "notes": "Standard regime uses MR-55 ข้อ 50 (openings) + BMA-BL-2544 ข้อ 55 (2 m all round above 15 m) and MR-55 ข้อ 41 for the road. High-rise regime replaces all of those with MR-33 ข้อ 4 (6 m from every boundary and road)."
+      "notes": "Standard regime uses MR-55 ข้อ 50 (openings) + BMA-BL-2544 ข้อ 55 (1 m all round up to 15 m, 2 m above 15 m; derive from bma-perimeter-open by building height) and MR-55 ข้อ 41 for the road. Effective boundary setback = max(openings value, perimeter value). High-rise regime replaces all of those with MR-33 ข้อ 4 (6 m from every boundary and road)."
     },
     "lowRiseResidential": {
       "label": "Detached house / townhouse (อาคารอยู่อาศัย <= 3 storeys, <= 10 m, <= 1,000 m2)",
@@ -60,7 +63,7 @@
       "maxHeightM": 10,
       "openSpacePlotPercentMin": 30,
       "setbacks": {
-        "standard": { "boundaryM": 2, "boundaryIfHeightGt9mM": 3, "perimeterOpenM": 1, "blankWallMinM": 0.5, "roadSetbackRule": "mr55-road-setback" }
+        "standard": { "boundaryM": 2, "boundaryIfHeightGt9mM": 3, "perimeterOpenByHeight": [ { "heightMaxM": 15, "m": 1 }, { "heightMaxM": 23, "m": 2 } ], "perimeterOpenRule": "bma-perimeter-open", "perimeterOpenExemptHouseMaxM2": 300, "blankWallMinM": 0.5, "roadSetbackRule": "mr55-road-setback" }
       }
     },
     "office": {
@@ -71,7 +74,7 @@
       "openSpacePlotPercentMin": 10,
       "assumeWallsHaveOpenings": true,
       "setbacks": {
-        "standard": { "boundaryM": 3, "boundaryIfHeightLe9mM": 2, "perimeterOpenM": 2, "roadSetbackRule": "mr55-road-setback" },
+        "standard": { "boundaryM": 3, "boundaryIfHeightLe9mM": 2, "perimeterOpenByHeight": [ { "heightMaxM": 15, "m": 1 }, { "heightMaxM": 23, "m": 2 } ], "perimeterOpenRule": "bma-perimeter-open", "roadSetbackRule": "mr55-road-setback" },
         "highRise": { "boundaryM": 6, "roadM": 6, "perimeterOpenM": 6 }
       },
       "zoneCondition": "In ย.10 an office with operating area > 10,000 m2 needs a road right-of-way >= 12 m or a rail station within 500 m (BMA-CP ข้อ 17(10)).",
@@ -147,7 +150,7 @@
       "params": { "minFrontageM": 12, "minRowM_gfaLe30000": 10, "minRowM_gfaGt30000": 18, "minAccessStripWidthM": 12 },
       "formula": "Plot must have one side >= 12.00 m on a public road whose right-of-way (เขตทาง) is >= 10.00 m (GFA <= 30,000 m2) or >= 18.00 m (GFA > 30,000 m2), and that road must run continuously to another public road of the same minimum width. The road-facing strip of the plot must stay >= 12.00 m wide all the way to the building for fire-engine access. Tool checks frontage length and the entered right-of-way; road continuity is attested by the user (cannot be computed from the drawing).",
       "thai": "ข้อ 2 ที่ดินที่ใช้เป็นที่ตั้งของอาคารสูงหรืออาคารขนาดใหญ่พิเศษที่มีพื้นที่อาคารรวมกันทุกชั้นไม่เกิน 30,000 ตารางเมตร ต้องมีด้านหนึ่งด้านใดของที่ดินนั้นยาวไม่น้อยกว่า 12.00 เมตร ติดถนนสาธารณะที่มีเขตทางกว้างไม่น้อยกว่า 10.00 เมตร ยาวต่อเนื่องกันโดยตลอดจนไปเชื่อมต่อกับถนนสาธารณะอื่นที่มีเขตทางกว้างไม่น้อยกว่า 10.00 เมตร สำหรับ ... มากกว่า 30,000 ตารางเมตร ... เขตทางกว้างไม่น้อยกว่า 18.00 เมตร ...",
-      "source": "MR-33 ข้อ 2 (as amended by MR-50 B.E. 2540)",
+      "source": "MR-33 ข้อ 2 (as amended by No. 50/2540)",
       "assumed": false
     },
     {
@@ -190,7 +193,8 @@
       "regime": "standard",
       "params": {
         "anyBuilding_roadLt6m_fromCentrelineM": 3,
-        "tier2_applies": "building > 2 storeys or > 8 m, or large building, shophouse, commercial, factory, public building, warehouse",
+        "tier2_applies": "building > 2 storeys or > 8 m, shophouse, row house, commercial, factory, public building, sign, warehouse (MR-55 ข้อ 41 list)",
+        "tier2_appliesBangkokExtra": "BMA-BL-2544 ข้อ 50 adds อาคารขนาดใหญ่ (large building, > 2,000 m2 or >= 15 m and > 1,000 m2, see thresholds.largeBuildingGfaM2) to the tier-2 list and exempts houses <= 3 storeys, <= 10 m, <= 1,000 m2",
         "tier2_roadLt10m_fromCentrelineM": 6,
         "tier2_road10to20m_fractionOfWidth_fromRoadEdge": 0.1,
         "tier2_roadGt20m_fromRoadEdgeM": 2
@@ -229,7 +233,7 @@
       "params": { "multiplier": 2 },
       "formula": "Height of the building at any point <= 2 x the horizontal distance from that point, perpendicular, to the far boundary of the nearest public road. With right-of-way W and the building's front face set back s from the near road edge: Hmax(front face) = 2 x (W + s). Points deeper in the plot may go higher (sloped envelope: H(x) = 2 x (W + x) where x = distance from near road edge). Tool v1 uses the flat conservative cap 2 x (W + s) over the whole footprint; a sloped mode is optional. Height is measured from road or ground level to the highest part of the building (gable/hip roofs: to the top of the highest wall); rooftop items that are separate 'buildings' (tanks, plant) are excluded.",
       "thai": "ข้อ 44 ความสูงของอาคารไม่ว่าจากจุดหนึ่งจุดใด ต้องไม่เกินสองเท่าของระยะราบ วัดจากจุดนั้นไปตั้งฉากกับแนวเขตด้านตรงข้ามของถนนสาธารณะที่อยู่ใกล้อาคารนั้นที่สุด ความสูงของอาคารให้วัดแนวดิ่งจากระดับถนนหรือระดับพื้นดินที่ก่อสร้างขึ้นไปถึงส่วนของอาคารที่สูงที่สุด",
-      "source": "MR-55 ข้อ 44 (วรรคสาม added by MR-68 B.E. 2563); same rule in BMA-BL-2544 ข้อ 49",
+      "source": "MR-55 ข้อ 44 (วรรคสาม by No. 68/2563); same rule in BMA-BL-2544 ข้อ 49",
       "assumed": false
     },
     {
@@ -247,7 +251,7 @@
       "stage": "height",
       "appliesTo": ["condo", "lowRiseResidential"],
       "params": { "defaultM": 3.0, "legalMinM": 2.6 },
-      "formula": "floors = floor(Hmax / 3.0); height = floors x 3.0. Legal minimum floor-to-floor for residential rooms is 2.60 m (offices 3.00 m, retail 3.50 m); 3.0 m is a typical Bangkok condo structural floor-to-floor and leaves ~2.6-2.7 m clear. Changing this slider changes floor count, not the height cap.",
+      "formula": "floors = floor(Hmax / floorToFloorM); height = floors x floorToFloorM, with floorToFloorM defaulting to 3.0 for residential. Legal minimum floor-to-floor for residential rooms is 2.60 m (offices 3.00 m, retail 3.50 m); 3.0 m is a typical Bangkok condo structural floor-to-floor and leaves ~2.6-2.7 m clear. Changing this slider changes floor count, not the height cap.",
       "thai": "ข้อ 22 ... 1. ห้องที่ใช้เป็นที่พักอาศัย ... 2.60 เมตร ... ระยะดิ่งตามวรรคหนึ่งให้วัดจากพื้นถึงพื้น",
       "source": "MR-55 ข้อ 22 for the 2.60 m minimum; the 3.0 m default is an assumption (DECISIONS 2026-11-20 'Floor-to-floor')",
       "assumed": true
@@ -276,7 +280,7 @@
       "stage": "far",
       "appliesTo": ["condo", "lowRiseResidential", "office"],
       "params": { "maxCombinedBonusPercent": 20, "notApplied": true },
-      "formula": "The plan allows FAR bonuses (affordable housing up to +20%, public open space in ย.8-ย.10/พ.2-พ.5 up to +20% capped at 5x the open area, public parking near stations +20%, rain retention 1 m3 per 50 m2 +5% to +20%, green building +5/10/15/20%), combined cap +20% (so FAR 9.6 in ย.10). The tool applies the base FAR 8 only and shows a note.",
+      "formula": "The plan allows FAR bonuses, combined cap +20% (so FAR 9.6 in ย.10). Available to a residential building: affordable / existing-resident housing (ข้อ 52, up to +20%, extra GFA <= 4x the affordable area), rain retention 1 m3 per 50 m2 of plot (ข้อ 55, +5% to +20%), certified green building (ข้อ 56, +5/10/15/20%). NOT available to a condo: the public open space bonus (ข้อ 53) and the public parking bonus near stations (ข้อ 54) are limited to อาคารสาธารณะ (public buildings). The tool applies the base FAR 8 only and shows a note.",
       "thai": "ข้อ 57 การเพิ่มอัตราส่วนพื้นที่อาคารรวมต่อพื้นที่ดินตามข้อ 51 ถึงข้อ 56 ให้มีอัตราส่วนพื้นที่อาคารรวมต่อพื้นที่ดินรวมกันเพิ่มได้ไม่เกินร้อยละยี่สิบ",
       "source": "BMA-CP ข้อ 51-57; call logged in DECISIONS 2026-11-20 'FAR bonuses'",
       "assumed": true
@@ -287,7 +291,7 @@
       "appliesTo": ["condo", "lowRiseResidential", "office"],
       "params": { "definition": "right-of-way (เขตทาง), boundary to boundary, including footpaths" },
       "formula": "All road-width tests use the public right-of-way: the plan says ขนาดเขตทาง, MR-33 ข้อ 2 says เขตทางกว้าง, MR-55 ข้อ 41/44 measure from the road centreline or the road boundary (เขตถนน / แนวเขตด้านตรงข้าม), which is also the right-of-way. The carriageway (ผิวการจราจร) only appears in MR-33 ข้อ 3 (6 m fire road). Tool: right-of-way is a numeric input; when OSM has no width tag the default is lanes x 3.5 m + 4 m (footpaths), flagged as estimated.",
-      "source": "BMA-CP ข้อ 17 and ข้อ 36 (ขนาดเขตทาง); MR-33 ข้อ 2 (เขตทางกว้าง); MR-55 ข้อ 41, 44; OSM fallback is an assumption (DECISIONS 2026-11-20 'Road width')",
+      "source": "BMA-CP ข้อ 17 and ข้อ 36 (ขนาดเขตทาง); MR-33 ข้อ 2 (เขตทางกว้าง); MR-55 ข้อ 41, 44; SEC-OSM fallback is an assumption (DECISIONS 2026-11-20 'Road width')",
       "assumed": true
     },
     {
@@ -297,6 +301,41 @@
       "params": { "classes": ["road", "boundary"] },
       "formula": "Thai setback law distinguishes only edges on a public road (ถนนสาธารณะ) from edges on another owner's land (เขตที่ดินของผู้อื่น); there is no separate side vs rear rule for free-standing buildings. Edges adjacent to the selected road (or marked by the user) are 'road' edges and get the road setback; all other edges are 'boundary' edges and get the boundary setback. The UI may still label them front/side/rear for readability.",
       "source": "MR-55 ข้อ 41 vs ข้อ 50; MR-33 ข้อ 4; call logged in DECISIONS 2026-11-20 'Edge classification'",
+      "assumed": true
+    },
+    {
+      "id": "bma-frontage",
+      "stage": "frontage",
+      "appliesTo": ["condo", "lowRiseResidential", "office"],
+      "params": { "triggerStoreys": 2, "triggerHeightM": 8, "exemptResidentialMaxStoreys": 3, "frontOpenSpaceM": 6, "frontOpenSpaceIfGt3StoreysM": 12, "frontOpenContinuousFractionOfPerimeter": 0.1667, "frontingLineMinFractionOfPerimeter": 0.125, "frontingLineMaxDistanceFromWayM": 20 },
+      "formula": "Per-design check. A building > 2 storeys or > 8 m (commercial, factory, warehouse, public building, or any such building; residential <= 3 storeys exempt) that is NOT 'fronting a public way' must keep a front open space >= 6 m deep (>= 12 m if > 3 storeys), continuous over >= 1/6 of the building's outer perimeter and connected to the public way by an internal road >= 6 m wide. A building counts as fronting the public way (ข้อ 53) when its road-facing building line is longer than 1/8 of its outer perimeter AND that line is <= 20 m from the public way. Tool: for each massing, compute the footprint perimeter P, the length L of footprint edges parallel-and-adjacent to the road edge, and their distance d from the road boundary; pass if L > P/8 and d <= 20 m; otherwise require the 6 m / 12 m strip between the footprint and the road and flag it.",
+      "thai": "ข้อ 52 (6) อาคารพาณิชย์ โรงงานอุตสาหกรรม คลังสินค้า อาคารสาธารณะ อาคารสูงเกิน 2 ชั้นหรือสูงเกิน 8 เมตร ยกเว้นอาคารอยู่อาศัยสูงไม่เกิน 3 ชั้น ที่ไม่อยู่ริมทางสาธารณะ ให้มีที่ว่างด้านหน้ากว้างไม่น้อยกว่า 6 เมตร อาคารตามวรรคหนึ่งถ้าสูงเกิน 3 ชั้น ให้มีที่ว่างกว้างไม่น้อยกว่า 12 เมตร ... / ข้อ 53 อาคารอยู่ริมทางสาธารณะที่ไม่ต้องมีที่ว่างตามข้อ 52(3) และ 52(6) ต้องมีลักษณะ ดังนี้ แนวอาคารด้านที่ประชิดติดริมทางสาธารณะ ต้องมีความยาวมากกว่า 1 ใน 8 ส่วนของความยาวเส้นรอบรูปภายนอกของอาคาร ทั้งนี้ แนวอาคารด้านที่ประชิดติดทางสาธารณะต้องห่างทางสาธารณะไม่เกิน 20 เมตร",
+      "source": "BMA-BL-2544 ข้อ 52(6), ข้อ 53",
+      "assumed": false
+    },
+    {
+      "id": "mr55-buildings-same-plot",
+      "stage": "setback",
+      "appliesTo": ["condo", "lowRiseResidential", "office"],
+      "informational": true,
+      "params": {
+        "openingsToOpenings": [ { "a": "<=9m", "b": "<=9m", "m": 4 }, { "a": "<=9m", "b": "9-23m", "m": 5 }, { "a": "9-23m", "b": "9-23m", "m": 6 } ],
+        "blankToOpenings": [ { "a": "<=15m", "b": "<=9m", "m": 2 }, { "a": "<=15m", "b": "9-23m", "m": 3 }, { "a": "15-23m", "b": "<=9m", "m": 2.5 }, { "a": "15-23m", "b": "9-23m", "m": 3.5 } ]
+      },
+      "formula": "Two buildings on the same plot (same owner): walls with openings facing each other must be >= 4 m apart (both <= 9 m high), 5 m (one <= 9 m, other 9-23 m), 6 m (both 9-23 m); a blank wall facing an openings wall: 2 / 3 / 2.5 / 3.5 m by the height pairs. Only relevant to a massing template that places two separate blocks (e.g. twin towers or podium + detached block); a single tower-on-podium is one building.",
+      "thai": "ข้อ 48 การก่อสร้างอาคารในที่ดินเจ้าของเดียวกัน ... (1) ผนังของอาคารด้านที่มีหน้าต่าง ... ต้องมีระยะห่างจากผนังของอาคารอื่นด้านที่มีหน้าต่าง ... (ก) อาคารที่มีความสูงไม่เกิน 9 เมตร ... ไม่น้อยกว่า 4 เมตร (ข) ... ไม่น้อยกว่า 5 เมตร (ค) อาคารที่มีความสูงเกิน 9 เมตร แต่ไม่ถึง 23 เมตร ... ไม่น้อยกว่า 6 เมตร",
+      "source": "MR-55 ข้อ 48 (replaced by No. 61/2550)",
+      "assumed": false
+    },
+    {
+      "id": "bma-parking-indicative",
+      "stage": "far",
+      "appliesTo": ["condo"],
+      "informational": true,
+      "params": { "spacesPerUnit": 1, "unitAreaM2": 60, "m2PerSpaceInclAisles": 30, "parkingCountsInFar": true, "altRatioM2PerSpace": 120 },
+      "formula": "Indicative only. BMA-BL-2544 ข้อ 84(3): condominiums / อาคารอยู่อาศัยรวม need 1 car space per unit. Common Bangkok practice (Ministerial Regulation No. 7 B.E. 2517 as amended, not read from primary text here) applies 1 space per unit of >= 60 m2 and otherwise 1 space per 120 m2 of floor area. Tool: estimate units = saleable GFA / 60 m2 (user-adjustable), spaces = max(units for units >= 60 m2, GFA/120), parking GFA = spaces x 30 m2, and show 'indicative saleable GFA' = FAR GFA - parking GFA, because parking floors count in FAR (far-counts-all-floors). Not a pass/fail check.",
+      "thai": "ข้อ 84 ... (3) อาคารอยู่อาศัยรวมหรืออาคารชุด ให้มีที่จอดรถ 1 คันต่อ 1 ห้องชุด",
+      "source": "BMA-BL-2544 ข้อ 84(3) for the 1-per-unit ratio; the 60 m2 / 120 m2 variant is attributed to Ministerial Regulation No. 7 (B.E. 2517, amended) and is NOT verified from primary text; 30 m2 per space incl. aisles and the 60 m2 unit size are assumptions (DECISIONS 2026-11-20 'Parking')",
       "assumed": true
     },
     {
