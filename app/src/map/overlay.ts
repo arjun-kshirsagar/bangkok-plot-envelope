@@ -33,6 +33,10 @@ interface PolyDatum {
   rings: Position[][]
 }
 
+interface FloorLine {
+  path: [number, number, number][]
+}
+
 function toData(geometry: Polygon | MultiPolygon | null): PolyDatum[] {
   if (!geometry) return []
   if (geometry.type === 'Polygon') return [{ rings: geometry.coordinates }]
@@ -91,7 +95,7 @@ export function buildPipelineLayers(result: PipelineResult, visibility: StageVis
         ...placement,
       }),
     )
-    if (heightM > 0) {
+    if (heightM > 0 && !options.envelopeFaded) {
       layers.push(
         new PolygonLayer<PolyDatum>({
           id: 'envelope-volume',
@@ -102,10 +106,42 @@ export function buildPipelineLayers(result: PipelineResult, visibility: StageVis
           extruded: true,
           wireframe: true,
           getElevation: heightM,
-          getFillColor: options.envelopeFaded ? [59, 130, 246, 28] : STAGE_COLORS.envelope.fill,
+          getFillColor: STAGE_COLORS.envelope.fill,
           getLineColor: STAGE_COLORS.envelope.line,
           material: { ambient: 0.55, diffuse: 0.6, shininess: 20, specularColor: [80, 80, 80] },
           pickable: false,
+          ...placement,
+        }),
+      )
+    } else if (heightM > 0) {
+      // A design is selected: the envelope becomes a reference cage (edges + a very faint
+      // skin) that never writes depth, so the design drawn before it stays fully visible.
+      layers.push(
+        new PolygonLayer<PolyDatum>({
+          id: 'envelope-volume-faded',
+          data,
+          getPolygon: (d) => d.rings,
+          filled: true,
+          stroked: false,
+          extruded: true,
+          wireframe: false,
+          getElevation: heightM,
+          getFillColor: [59, 130, 246, 20],
+          material: false,
+          pickable: false,
+          parameters: { depthWriteEnabled: false },
+          ...placement,
+        }),
+        new PathLayer<FloorLine>({
+          id: 'envelope-edges',
+          data: envelopeEdges(data, heightM),
+          getPath: (d) => d.path,
+          getColor: [37, 99, 235, 210],
+          getWidth: 1.5,
+          widthUnits: 'pixels',
+          widthMinPixels: 1,
+          pickable: false,
+          parameters: { depthCompare: 'less-equal', depthWriteEnabled: false },
           ...placement,
         }),
       )
@@ -114,12 +150,36 @@ export function buildPipelineLayers(result: PipelineResult, visibility: StageVis
   return layers
 }
 
+/**
+ * Wireframe of an extruded footprint: the top ring of every ring, plus vertical edges at
+ * the vertices where the outline actually turns (> 20 deg), so arc-rounded corners do not
+ * become a comb of lines.
+ */
+function envelopeEdges(data: PolyDatum[], heightM: number): FloorLine[] {
+  const out: FloorLine[] = []
+  for (const { rings } of data) {
+    for (const ring of rings) {
+      const pts = ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1] ? ring.slice(0, -1) : ring
+      if (pts.length < 3) continue
+      out.push({ path: [...pts, pts[0]].map((p) => [p[0], p[1], heightM] as [number, number, number]) })
+      const k = Math.cos((pts[0][1] * Math.PI) / 180)
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[(i - 1 + pts.length) % pts.length]
+        const b = pts[i]
+        const c = pts[(i + 1) % pts.length]
+        const t1 = Math.atan2(b[1] - a[1], (b[0] - a[0]) * k)
+        const t2 = Math.atan2(c[1] - b[1], (c[0] - b[0]) * k)
+        let turn = Math.abs(t2 - t1)
+        if (turn > Math.PI) turn = 2 * Math.PI - turn
+        if (turn > (20 * Math.PI) / 180) out.push({ path: [[b[0], b[1], 0], [b[0], b[1], heightM]] })
+      }
+    }
+  }
+  return out
+}
+
 export const DESIGN_FILL: Rgba = [222, 142, 84, 235]
 export const DESIGN_LINE: Rgba = [110, 60, 25, 255]
-
-interface FloorLine {
-  path: [number, number, number][]
-}
 
 /** Selected design as solid extruded blocks with a floor line at every storey. */
 export function buildDesignLayers(design: Design | null, options: OverlayOptions = {}): Layer[] {

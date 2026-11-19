@@ -24,6 +24,16 @@ export interface DrawHandlers {
   onDrawFinished: () => void
   /** Fired when the user deletes the plot inside Terra Draw (Delete key). */
   onPlotDeleted: () => void
+  /** Fired when Terra Draw's validation result changes: a user-facing reason, or null when valid again. */
+  onValidation?: (message: string | null) => void
+}
+
+/** Plain-language version of a Terra Draw validation failure. */
+function validationMessage(reason: string | undefined, drawing: boolean): string {
+  if (reason && /vertices/.test(reason)) return `${reason}: the plot is capped at ${MAX_PLOT_VERTICES} vertices to keep the geometry fast. Close the outline or remove a vertex.`
+  return drawing
+    ? 'That vertex would make the outline cross itself, so it was not added. Click somewhere that keeps the edges apart.'
+    : 'That move would make the outline cross itself, so it was undone. Drag the vertex somewhere that keeps the edges apart.'
 }
 
 export interface DrawController {
@@ -35,6 +45,15 @@ export interface DrawController {
 }
 
 export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): DrawController {
+  let lastNotice: string | null = null
+  const report = (v: { valid: boolean; reason?: string }, drawing: boolean) => {
+    const notice = v.valid ? null : validationMessage(v.reason, drawing)
+    if (notice !== lastNotice) {
+      lastNotice = notice
+      handlers.onValidation?.(notice)
+    }
+    return v
+  }
   const draw = new TerraDraw({
     adapter: new TerraDrawMapLibreGLAdapter({ map, coordinatePrecision: 9 }),
     modes: [
@@ -42,13 +61,13 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
         // While drawing, the ring carries the provisional cursor vertex as well, hence +1.
         validation: (feature) => {
           const v = ValidateNotSelfIntersecting(feature)
-          if (!v.valid) return v
+          if (!v.valid) return report(v, true)
           const n = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0].length - 1 : 0
-          return n <= MAX_PLOT_VERTICES + 1 ? { valid: true } : { valid: false, reason: `Maximum ${MAX_PLOT_VERTICES} vertices` }
+          return report(n <= MAX_PLOT_VERTICES + 1 ? { valid: true } : { valid: false, reason: `Maximum ${MAX_PLOT_VERTICES} vertices` }, true)
         },
         styles: {
           fillColor: PLOT_FILL_COLOR,
-          fillOpacity: 0.28,
+          fillOpacity: 0.14,
           outlineColor: PLOT_OUTLINE_COLOR,
           outlineWidth: 2,
           closingPointColor: '#ffffff',
@@ -63,9 +82,9 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
             feature: {
               validation: (feature) => {
                 const v = ValidateNotSelfIntersecting(feature)
-                if (!v.valid) return v
+                if (!v.valid) return report(v, false)
                 const n = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0].length - 1 : 0
-                return n <= MAX_PLOT_VERTICES ? { valid: true } : { valid: false, reason: `Maximum ${MAX_PLOT_VERTICES} vertices` }
+                return report(n <= MAX_PLOT_VERTICES ? { valid: true } : { valid: false, reason: `Maximum ${MAX_PLOT_VERTICES} vertices` }, false)
               },
               draggable: false,
               rotateable: false,
@@ -81,7 +100,7 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
         },
         styles: {
           selectedPolygonColor: PLOT_FILL_COLOR,
-          selectedPolygonFillOpacity: 0.28,
+          selectedPolygonFillOpacity: 0.2,
           selectedPolygonOutlineColor: PLOT_OUTLINE_COLOR,
           selectedPolygonOutlineWidth: 2,
           selectionPointColor: '#ffffff',

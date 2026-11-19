@@ -105,6 +105,7 @@ export function MapView() {
           fitToPlot(store.getState().plot)
         },
         onPlotDeleted: () => store.getState().clearPlot(),
+        onValidation: (message) => store.getState().setDrawNotice(message),
       })
       cleanups.push(() => draw.destroy())
 
@@ -127,8 +128,9 @@ export function MapView() {
         const selected = selectSelectedDesign(s, pipeline)
         overlay.setProps({
           layers: [
-            ...buildPipelineLayers(pipeline, s.stageVisibility, { beforeId, envelopeFaded: selected !== null }),
+            // The opaque design goes first so the faded envelope (no depth writes) blends over it.
             ...buildDesignLayers(selected?.design ?? null, { beforeId }),
+            ...buildPipelineLayers(pipeline, s.stageVisibility, { beforeId, envelopeFaded: selected !== null }),
           ],
         })
       }

@@ -46,6 +46,7 @@ export function SidePanel() {
   const plot = useAppStore((s) => s.plot)
   const mode = useAppStore((s) => s.mode)
   const setMode = useAppStore((s) => s.setMode)
+  const drawNotice = useAppStore((s) => s.drawNotice)
   const clearPlot = useAppStore((s) => s.clearPlot)
   const frontEdgeIndex = useAppStore((s) => s.frontEdgeIndex)
   const roadWidthM = useAppStore((s) => s.roadWidthM)
@@ -133,6 +134,11 @@ export function SidePanel() {
             </dl>
           )}
           {hasPlot && !plotOk && <p className="warn">{validation.reason}</p>}
+          {drawNotice && (mode === 'draw' || mode === 'edit') && (
+            <p className="warn" role="status">
+              {drawNotice}
+            </p>
+          )}
         </div>
 
         <div className="input-group">
@@ -222,6 +228,14 @@ export function SidePanel() {
           </span>
           <RuleRef ids={['zone-far', 'zone-osr']} />
         </div>
+        {zone?.straddles && (
+          <p className="warn">
+            The plot straddles {zone.straddles.join(' / ')}. The sub-zone containing its centroid is used ({zone.subzone?.code ?? 'outside Y.10'}); every Y.10 sub-zone carries the same FAR {ZONE_RULES.zone.far} and OSR {ZONE_RULES.zone.osrPercent}%.
+          </p>
+        )}
+        {zone?.outsideMapArea && (
+          <p className="warn">Part of the plot lies outside the mapped Y.10 area. Only Y.10 rules are modelled, so treat the result as indicative for this location.</p>
+        )}
       </section>
 
       <section className="section">
@@ -267,7 +281,14 @@ export function SidePanel() {
                   ids={['floor-to-floor', 'height-measurement']}
                 />
                 <Row label={`GFA cap (FAR ${ZONE_RULES.zone.far})`} value={`${n0(env.maxGfaM2)} m²`} ids={['zone-far', 'far-counts-all-floors', 'far-bonus-ignored']} />
-                {env.gfaCapM2 < env.maxGfaM2 - 0.5 && <Row label="GFA cap applied" value={`${n0(env.gfaCapM2)} m²`} sub="MR-33 ข้อ 2 road tier" ids={['mr33-road-access']} />}
+                {env.gfaCapM2 < env.maxGfaM2 - 0.5 && (
+                  <Row
+                    label="GFA cap applied"
+                    value={`${n0(env.gfaCapM2)} m²`}
+                    sub={env.gfaCapNote ?? 'MR-33 ข้อ 2 road tier'}
+                    ids={env.gfaCapM2 <= ZONE_RULES.thresholds.extraLargeGfaM2 + 0.5 ? ['highrise-threshold', 'mr33-road-access'] : ['mr33-road-access']}
+                  />
+                )}
                 <Row label="GFA in envelope" value={`${n0(env.gfaM2)} m²`} sub={`${Math.round((100 * env.gfaM2) / env.gfaCapM2)}% of cap`} />
                 <Row
                   label="Open space"

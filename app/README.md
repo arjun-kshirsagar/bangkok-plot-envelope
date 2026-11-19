@@ -17,6 +17,10 @@ npm test           # vitest: engine, designs, checks, rules, URL state, perf
 npm run build      # static build in dist/ (deploy: ../docs/DEPLOY.md)
 ```
 
+`predev` / `prebuild` run `scripts/sync-data.mjs`, which copies `../docs/SOURCES.md`, `../rules/bangkok-zone.json`
+and `../rules/bangkok-zone-y10.geojson` into `src/rules/` (the committed copies are kept when the repo root is
+absent, e.g. a Vercel build with root directory `app/`). Tests enforce byte identity, so nothing drifts.
+
 No API keys, no backend. Vector tiles and building heights come from OpenFreeMap
 (OpenStreetMap data); road width lookups ask the Overpass API and fall back gracefully.
 
@@ -26,11 +30,13 @@ Vite + React + TypeScript (strict) · MapLibre GL 5 (OpenFreeMap Liberty style, 
 buildings) · deck.gl 9 `MapboxOverlay` (interleaved) for envelope and design volumes ·
 Terra Draw (MapLibre adapter) for plot drawing and vertex editing · proj4 (WGS84 ↔ UTM 47N) ·
 polygon-clipping for setback erosion · Zustand for state · Vitest.
+The build splits vendor chunks (maplibre, deck.gl/luma, geometry, react) for parallel download and caching;
+nothing is lazy-loaded.
 
 ## How the envelope is computed
 
 Rules live in `src/rules/bangkok-zone.json` (a byte-identical copy of `../rules/bangkok-zone.json`,
-enforced by a test); every number cites a document ID in `../docs/SOURCES.md` and a clause.
+synced before dev / build and enforced by a test); every number cites a document ID in `../docs/SOURCES.md` and a clause.
 
 1. **Plot** — WGS84 polygon projected to UTM 47N; all geometry below is in metres.
 2. **Road setback** — MR-55 ข้อ 41 / BMA ข้อ 50 tiers by right-of-way (W < 10 m: 6 − W/2 from the edge;
@@ -45,12 +51,16 @@ enforced by a test); every number cites a document ID in `../docs/SOURCES.md` an
    built (BMA-CP ข้อ 17(2)); the footprint is shrunk by a further uniform offset when needed.
 7. **Regime** — if the standard-regime result reaches 23 m or 10,000 m² the building is อาคารสูง /
    ขนาดใหญ่พิเศษ and MR-33 applies (6 m clearance all round, 10 m road with 12 m frontage, fire road);
-   the envelope is recomputed and both routes are shown. No high-rise on roads under 10 m.
+   the envelope is recomputed and both routes are shown. No high-rise on roads under 10 m or with a front
+   edge under 12 m (MR-33 ข้อ 2): the envelope is then held under 23 m and 10,000 m² instead.
 
 Setbacks are true distance erosions (plot minus a strip per edge and a disc per reflex vertex),
 so concave plots and different per-edge distances just work. Concept designs (slab, tower on
 podium, courtyard) are built from the same plot + offsets, and the checklist re-evaluates each
-design in the regime the design itself triggers.
+design in the regime the design itself triggers (including the boundary setback at the design's
+own height). Every design offered without overrides passes every non-informational check (sweep
+test over 6 plot shapes x 5 road widths x 2 types); a deep, narrow footprint is cut back from the
+rear until it fronts the public way (BMA ข้อ 53).
 
 ## Layout
 
@@ -59,7 +69,14 @@ design in the regime the design itself triggers.
 deck.gl, zone layer, Overpass fallback) · `src/store` (Zustand, selectors, URL hash state) · `src/ui`.
 
 The scene lives in the URL hash (`#plot=…&front=…&road=…&type=…&f2f=…&design=…&view=…`), so a link
-reproduces the plot, inputs, selected design and camera. Worked example (40 × 40 m, 12 m soi, condo →
+reproduces the plot, inputs, selected design and camera.
+
+"Load example plot": an open lot / car park of ~2,280 m² (5 vertices) on Soi Sukhumvit 53 in ย.10-4, with
+no OSM building footprint on it; the 10 m right-of-way is assumed:
+
+`#plot=100.5777604,13.7260019;100.5776857,13.7252894;100.5774802,13.7252346;100.5774242,13.7256228;100.5775082,13.7259745&front=0&road=10&type=condo`
+
+"Load worked example (docs)": the research worked example (40 × 40 m, 12 m soi, condo →
 784 m² footprint, 36 m, 12 floors, 9,408 m² GFA):
 
 `#plot=100.5724,13.7363;100.5727699,13.7363;100.5727699,13.73666175;100.5724,13.73666175&front=0&road=12&type=condo`

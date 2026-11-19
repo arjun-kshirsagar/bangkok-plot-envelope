@@ -13,6 +13,12 @@ describe('rules files', () => {
     expect(app.equals(root)).toBe(true)
   })
 
+  it('app copy of docs/SOURCES.md (shown in the sources modal) is byte-identical to the repo-root copy', () => {
+    const app = readFileSync(here('./SOURCES.md'))
+    const root = readFileSync(here('../../../docs/SOURCES.md'))
+    expect(app.equals(root)).toBe(true)
+  })
+
   it('app copy of bangkok-zone-y10 (.json, Vite cannot import .geojson) is byte-identical to the repo-root .geojson', () => {
     const app = readFileSync(here('./bangkok-zone-y10.json'))
     const root = readFileSync(here('../../../rules/bangkok-zone-y10.geojson'))

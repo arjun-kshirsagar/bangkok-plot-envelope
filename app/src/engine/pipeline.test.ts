@@ -293,26 +293,66 @@ describe('high-rise recompute guard', () => {
 })
 
 describe('performance', () => {
-  it('a 60-vertex star plot runs the full pipeline in well under a second', async () => {
+  const star = (() => {
     const pts: XY[] = []
     for (let i = 0; i < 60; i++) {
       const ang = (2 * Math.PI * i) / 60
       const r = i % 2 === 0 ? 60 : 44
       pts.push([r * Math.cos(ang), r * Math.sin(ang)])
     }
-    const star = metricPlot(pts)
-    const inp = inputs(star, { roadWidthM: 12 })
-    const { generateDesigns } = await import('../designs/templates')
-    const { evaluateChecks } = await import('../checks/evaluate')
-    // Warm up module code once, then time.
-    runPipeline(inp, ZONE_RULES)
-    const t0 = performance.now()
-    const r = runPipeline(inp, ZONE_RULES)
-    const designs = generateDesigns(r, ZONE_RULES, inp)
-    designs.forEach((d) => evaluateChecks(d, r, ZONE_RULES, inp))
-    const ms = performance.now() - t0
-    console.info(`[perf] 60-vertex star: pipeline + ${designs.length} designs + checks in ${ms.toFixed(0)} ms`)
-    expect(r.ok).toBe(true)
-    expect(ms).toBeLessThan(400)
+    return metricPlot(pts)
+  })()
+  const cases: Array<[string, number, Record<string, { floors?: number; ignoreSetbacks?: boolean }>]> = [
+    ['12 m road', 12, {}],
+    ['8 m road (held under 10,000 m2)', 8, {}],
+    ['30 m road', 30, {}],
+    ['30 m road, podium-tower ignoring setbacks + 30 floors (thinness search)', 30, { podiumTower: { ignoreSetbacks: true, floors: 30 } }],
+    ['30 m road, every design ignoring setbacks', 30, { slab: { ignoreSetbacks: true }, podiumTower: { ignoreSetbacks: true }, courtyard: { ignoreSetbacks: true } }],
+  ]
+  for (const [label, road, overrides] of cases) {
+    it(`a 60-vertex star plot, ${label}: pipeline + designs + checks well under a second`, async () => {
+      const inp = inputs(star, { roadWidthM: road })
+      const { generateDesigns } = await import('../designs/templates')
+      const { evaluateChecks } = await import('../checks/evaluate')
+      // Warm up module code once, then time.
+      generateDesigns(runPipeline(inp, ZONE_RULES), ZONE_RULES, inp, overrides)
+      const t0 = performance.now()
+      const r = runPipeline(inp, ZONE_RULES)
+      const designs = generateDesigns(r, ZONE_RULES, inp, overrides)
+      designs.forEach((d) => evaluateChecks(d, r, ZONE_RULES, inp))
+      const ms = performance.now() - t0
+      console.info(`[perf] 60-vertex star, ${label}: pipeline + ${designs.length} designs + checks in ${ms.toFixed(0)} ms`)
+      expect(r.ok).toBe(true)
+      expect(designs.length).toBeGreaterThanOrEqual(2)
+      // Target is < 250 ms on a laptop; the bound leaves headroom for parallel test workers.
+      expect(ms).toBeLessThan(400)
+    })
+  }
+})
+
+describe('edge cases with user-facing messages', () => {
+  it('a tiny plot is consumed by the setbacks and says so', () => {
+    const r = runPipeline(inputs(metricPlot([[0, 0], [5, 0], [5, 5], [0, 5]])), ZONE_RULES)
+    expect(r.ok).toBe(false)
+    expect(r.annotations[0]).toMatch(/Nothing can be built/)
+  })
+
+  it('a front edge under 12 m holds a would-be high-rise in the standard regime (MR-33 ข้อ 2 frontage)', () => {
+    // Flag-shaped plot: 10 m access strip on a 20 m road, large rear part.
+    const flag = metricPlot([[0, 0], [10, 0], [10, 20], [60, 20], [60, 100], [-20, 100], [-20, 20], [0, 20]])
+    const r = runPipeline(inputs(flag, { roadWidthM: 20 }), ZONE_RULES)
+    expect(r.regime).toBe('standard')
+    expect(r.envelope!.heightM).toBeLessThan(23)
+    expect(r.envelope!.gfaM2).toBeLessThan(10000)
+    expect(r.warnings.join(' ')).toMatch(/Front edge 10 m < 12 m/)
+    expect(r.envelope!.gfaCapNote).toMatch(/plot side/)
+  })
+
+  it('road widths of 1 m and 200 m both produce an envelope', () => {
+    for (const w of [1, 200]) {
+      const r = runPipeline(inputs(SQUARE_40, { roadWidthM: w }), ZONE_RULES)
+      expect(r.ok, `${w} m`).toBe(true)
+      expect(r.envelope!.gfaM2).toBeLessThanOrEqual(r.envelope!.maxGfaM2)
+    }
   })
 })

@@ -11,7 +11,7 @@ export function Checklist() {
     <div className="checklist-wrap">
       <div className={`verdict ${checks.pass ? 'ok' : 'fail'}`}>
         <span>
-          {design.name}: {checks.pass ? 'passes' : 'fails'} {checks.passed}/{checks.total} checks
+          {design.name}: {checks.pass ? 'passes' : 'fails'} · {checks.passed} of {checks.total} checks pass
         </span>
         {checks.designRegime === 'highRise' && pipeline.regime === 'standard' && <span className="sub">This design triggers MR-33 on its own.</span>}
       </div>

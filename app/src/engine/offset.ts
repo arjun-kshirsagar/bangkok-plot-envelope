@@ -227,6 +227,12 @@ export interface ErodeToAreaResult {
  * already rounded footprint. The search is bracketed from the first-order estimate
  * s0 = (A - target) / perimeter and solved by regula falsi (Illinois), normally
  * 3-6 erosions.
+ *
+ * `incremental`: every probe after the first erodes the lower bracket's polygon (which is
+ * always non-empty and larger than the target) by the remaining uniform distance instead of
+ * eroding the source again. Erosion composes, and arcs are circumscribed, so the result is a
+ * (very slightly conservative) subset of the direct erosion; on a many-vertex concave source
+ * this is several times faster because the eroded polygon is nearly convex and needs few clips.
  */
 export function erodeToArea(
   source: MetricPolygon,
@@ -234,12 +240,25 @@ export function erodeToArea(
   targetAreaM2: number,
   toleranceM2 = 0.5,
   maxIterations = 15,
+  incremental = false,
 ): ErodeToAreaResult {
   const n = dropClosingPoint(source[0]).length
   const base = typeof baseDistances === 'number' ? new Array<number>(n).fill(baseDistances) : baseDistances
+  // Lower-bracket polygon (offset loS) that incremental probes start from.
+  let loS = 0
+  let loPoly: MetricPolygon | null = null
   const at = (s: number): { polygon: MetricPolygon | null; area: number } => {
-    const r = erodePolygon(source, base.map((d) => d + s), { withRemoved: false })
+    const r =
+      incremental && loPoly && loS > 0 && s > loS
+        ? erodePolygon([loPoly[0]], s - loS, { withRemoved: false })
+        : erodePolygon(source, base.map((d) => d + s), { withRemoved: false })
     return { polygon: r.polygon, area: r.polygon ? polygonArea(r.polygon) : 0 }
+  }
+  const raiseLo = (s: number, poly: MetricPolygon | null) => {
+    if (poly && s >= loS) {
+      loS = s
+      loPoly = poly
+    }
   }
   let iterations = 0
   const start = at(0)
@@ -247,6 +266,7 @@ export function erodeToArea(
   if (!start.polygon || targetAreaM2 >= start.area) return { polygon: start.polygon, offsetM: 0, areaM2: start.area, iterations }
   if (targetAreaM2 <= 0) return { polygon: null, offsetM: Infinity, areaM2: 0, iterations }
 
+  raiseLo(0, start.polygon)
   const perimeter = Math.max(1e-6, ringPerimeter(start.polygon[0]))
   const s0 = (start.area - targetAreaM2) / perimeter
   let lo = 0
@@ -257,6 +277,7 @@ export function erodeToArea(
   let fHi = probe.area - targetAreaM2
   let doublings = 0
   while (fHi > 0 && doublings < 8) {
+    raiseLo(hi, probe.polygon)
     lo = hi
     fLo = fHi
     hi *= 2
@@ -281,6 +302,7 @@ export function erodeToArea(
     }
     if (Math.abs(f) <= toleranceM2 && f <= 0) return { polygon: r.polygon, offsetM: s, areaM2: r.area, iterations }
     if (f > 0) {
+      raiseLo(s, r.polygon)
       lo = s
       fLo = f
       if (side === -1) fHi /= 2
@@ -328,6 +350,13 @@ export function polygonDifference(a: MetricPolygon | null, b: MetricPolygon | nu
     // Render-only geometry: never let a degenerate boolean operation break the pipeline.
     return []
   }
+}
+
+/** a intersect b (computed about a local origin), as a multipolygon. */
+export function polygonIntersection(a: MetricPolygon, b: MetricPolygon): MetricMultiPolygon {
+  const ox = a[0][0][0]
+  const oy = a[0][0][1]
+  return pc.intersection(translate(a, -ox, -oy), translate(b, -ox, -oy)).map((p) => translate(p, ox, oy))
 }
 
 export function polygonIntersectionArea(a: MetricPolygon, b: MetricPolygon): number {

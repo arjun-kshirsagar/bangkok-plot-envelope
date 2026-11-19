@@ -3,9 +3,10 @@
  */
 import type { Position } from 'geojson'
 import type { Design } from '../designs/types'
-import { bearingDeg, dropClosingPoint, pointToSegmentDistance, ringPerimeter, ringToSegmentDistance, segmentLength } from '../engine/geometry'
+import { dropClosingPoint, pointToSegmentDistance, ringPerimeter, ringToSegmentDistance, segmentLength } from '../engine/geometry'
+import { frontage as frontageOf, isFronting, type FrontageResult } from '../engine/frontage'
 import { polygonArea, polygonIntersectionArea, type MetricPolygon } from '../engine/offset'
-import type { PipelineInputs, PipelineResult } from '../engine/pipeline'
+import { boundarySetbackM, type PipelineInputs, type PipelineResult } from '../engine/pipeline'
 import { buildingTypeRules, getRule, ruleNumber } from '../rules/loadRules'
 import type { ZoneRules } from '../rules/types'
 import type { CheckRow, ChecklistResult } from './types'
@@ -42,23 +43,32 @@ function minDistanceToRing(p: Position, ring: Position[]): number {
   return best
 }
 
+/** Every vertex of `inner` lies inside `region` or within the 0.05 m tolerance of its boundary. */
+function verticesWithin(inner: MetricPolygon, region: MetricPolygon): boolean {
+  return dropClosingPoint(inner[0]).every((p) => pointInRing(p, region[0]) || minDistanceToRing(p, region[0]) <= CONTAINMENT_TOLERANCE_M)
+}
+
 /**
- * True when `inner` lies within `region`, allowing a 0.05 m band of float noise:
- * identical rings pass directly; otherwise the part of `inner` outside `region`
- * must be smaller than perimeter x tolerance. No erosion of the (rounded) design
- * polygon is needed, which keeps this cheap on many-vertex plots.
+ * True when `inner` lies within `region`, allowing a 0.05 m band of float noise.
+ * Identical rings pass directly. Otherwise two tests must both hold:
+ * - every vertex of `inner` is inside `region` or within 0.05 m of it (catches a local
+ *   bump of any size beyond the tolerance, which an area test alone would absorb), and
+ * - the part of `inner` outside `region` is smaller than perimeter x 0.05 m (catches an
+ *   edge of `inner` cutting across a reflex corner of `region` between two inside vertices).
+ * No erosion of the (rounded) design polygon is needed, which keeps this cheap on many-vertex plots.
  */
 export function containedWithin(inner: MetricPolygon, region: MetricPolygon | null): boolean {
   if (!region) return false
   if (sameRing(inner[0], region[0])) return true
+  if (!verticesWithin(inner, region)) return false
   const a = polygonArea([inner[0]])
   const slack = Math.max(0.05, ringPerimeter(inner[0]) * CONTAINMENT_TOLERANCE_M)
   try {
     const inside = polygonIntersectionArea([inner[0]], [region[0]])
     return inside >= a - slack
   } catch {
-    // Degenerate boolean op: fall back to a vertex test (exact for convex regions, conservative otherwise).
-    return dropClosingPoint(inner[0]).every((p) => pointInRing(p, region[0]) || minDistanceToRing(p, region[0]) <= CONTAINMENT_TOLERANCE_M)
+    // Degenerate boolean op: the vertex test above already passed (exact for convex regions).
+    return true
   }
 }
 
@@ -73,25 +83,11 @@ function plotEdges(plot: MetricPolygon): Array<[Position, Position]> {
 }
 
 /**
- * BMA-BL-2544 ข้อ 53 fronting test: length of the footprint's road-facing building line
- * (edges roughly parallel to the front edge and at the footprint's nearest distance to
- * it) and that distance.
+ * BMA-BL-2544 ข้อ 53 fronting test on a design footprint (see engine/frontage.ts for the
+ * building-line heuristic). Distance limit from the rules JSON (bma-frontage).
  */
-export function frontage(footprint: MetricPolygon, front: [Position, Position]): { distanceM: number; lineM: number; perimeterM: number } {
-  const ring = dropClosingPoint(footprint[0])
-  const distanceM = distanceToEdge(footprint, front[0], front[1])
-  const frontBearing = bearingDeg(front[0], front[1])
-  let lineM = 0
-  for (let i = 0; i < ring.length; i++) {
-    const a = ring[i]
-    const b = ring[(i + 1) % ring.length]
-    const da = pointToSegmentDistance(a, front[0], front[1])
-    const db = pointToSegmentDistance(b, front[0], front[1])
-    const diff = Math.abs(((bearingDeg(a, b) - frontBearing + 540) % 180) - 0) // 0 or ~180 = parallel
-    const parallel = diff < 15 || diff > 165
-    if (parallel && Math.max(da, db) <= distanceM + 1.0) lineM += segmentLength(a, b)
-  }
-  return { distanceM, lineM, perimeterM: ringPerimeter(footprint[0]) }
+export function frontage(footprint: MetricPolygon, front: [Position, Position], rules: ZoneRules): FrontageResult {
+  return frontageOf(footprint[0], front, ruleNumber(rules, 'bma-frontage', 'frontingLineMaxDistanceFromWayM'))
 }
 
 export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: ZoneRules, inputs: PipelineInputs): ChecklistResult {
@@ -129,14 +125,19 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   edges.forEach((e, i) => {
     if (i !== metric.frontEdgeIndex) boundaryDist = Math.min(boundaryDist, distanceToEdge(design.footprint, e[0], e[1]))
   })
+  // Standard regime: the required distance depends on the design's OWN height (MR-55 ข้อ 50 /
+  // BMA ข้อ 55), which a floors override can raise above the envelope's built height.
+  const boundaryReq = pipeline.regime === 'highRise' ? metric.boundarySetbackM : boundarySetbackM(rules, typeRules, design.heightM).m
+  const boundaryRaised = boundaryReq > metric.boundarySetbackM + EPS
   rows.push({
     ruleId: pipeline.regime === 'highRise' ? 'mr33-clearance' : 'mr55-boundary-openings',
     label: 'Boundary setback',
-    requirement: `Walls >= ${m(metric.boundarySetbackM)} from every neighbouring boundary.`,
+    requirement: `Walls >= ${m(boundaryReq)} from every neighbouring boundary${pipeline.regime === 'highRise' ? '' : ` (at this design's height of ${m(design.heightM, 1)})`}.`,
     actual: Number.isFinite(boundaryDist) ? m(boundaryDist) : '—',
-    allowed: `>= ${m(metric.boundarySetbackM)}`,
-    pass: containedWithin(design.footprint, metric.afterBoundarySetback),
+    allowed: `>= ${m(boundaryReq)}`,
+    pass: containedWithin(design.footprint, metric.afterBoundarySetback) && boundaryDist >= boundaryReq - CONTAINMENT_TOLERANCE_M,
     source: src(pipeline.regime === 'highRise' ? 'mr33-clearance' : 'mr55-boundary-openings'),
+    note: boundaryRaised ? `The envelope was computed for ${m(metric.boundarySetbackM)} at its own height; at ${m(design.heightM, 1)} this design needs ${m(boundaryReq)}.` : undefined,
   })
 
   // 3. MR-33 6 m clearance when the design is (or makes itself) high-rise / extra-large.
@@ -170,17 +171,21 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   })
 
   // 5. FAR (and the MR-33 ข้อ 2 30,000 m2 road tier when it is lower).
-  const roadTierBinds = env.gfaCapM2 < env.maxGfaM2 - 0.5
+  // A lower cap is either the MR-33 ข้อ 2 30,000 m2 road tier or the hold under the 10,000 m2
+  // extra-large threshold (MR-33 ข้อ 1) when the road cannot carry a high-rise; the envelope says which.
+  const capBinds = env.gfaCapM2 < env.maxGfaM2 - 0.5
+  const capIsHold = capBinds && env.gfaCapM2 <= hrGfa + 0.5
+  const capRule = capIsHold ? 'highrise-threshold' : 'mr33-road-access'
   rows.push({
-    ruleId: roadTierBinds ? 'mr33-road-access' : 'zone-far',
-    label: roadTierBinds ? `GFA cap (FAR ${rules.zone.far}, road tier)` : `FAR ${rules.zone.far}`,
-    requirement: roadTierBinds
-      ? `Gross floor area <= ${rules.zone.far} x plot area = ${m2(env.maxGfaM2)}, and <= ${m2(env.gfaCapM2)} because the road is under 18 m (MR-33 ข้อ 2).`
+    ruleId: capBinds ? capRule : 'zone-far',
+    label: capBinds ? `GFA cap (FAR ${rules.zone.far}, ${capIsHold ? 'held under 10,000 m²' : 'road tier'})` : `FAR ${rules.zone.far}`,
+    requirement: capBinds
+      ? `Gross floor area <= ${rules.zone.far} x plot area = ${m2(env.maxGfaM2)}, and <= ${m2(env.gfaCapM2)}: ${env.gfaCapNote ?? (capIsHold ? 'held under the extra-large threshold.' : 'MR-33 road tier.')}`
       : `Gross floor area <= ${rules.zone.far} x plot area = ${m2(env.maxGfaM2)}.`,
     actual: m2(design.gfaM2),
     allowed: `<= ${m2(env.gfaCapM2)}`,
     pass: design.gfaM2 <= env.gfaCapM2 + 0.5,
-    source: roadTierBinds ? `${src('zone-far')}; ${src('mr33-road-access')}` : src('zone-far'),
+    source: capBinds ? `${src('zone-far')}; ${src(capRule)}` : src('zone-far'),
   })
 
   // 6. 30% of plot open space.
@@ -231,11 +236,12 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   const exemptStoreys = ruleNumber(rules, 'bma-frontage', 'exemptResidentialMaxStoreys')
   const frontageApplies = (design.floors > triggerStoreys || design.heightM > triggerHeight + EPS) && !(design.floors <= exemptStoreys)
   if (frontageApplies) {
-    const fr = frontage(design.footprint, front)
+    const fr = frontage(design.footprint, front, rules)
     const minFraction = ruleNumber(rules, 'bma-frontage', 'frontingLineMinFractionOfPerimeter')
     const maxDist = ruleNumber(rules, 'bma-frontage', 'frontingLineMaxDistanceFromWayM')
-    const fronting = fr.lineM > minFraction * fr.perimeterM && fr.distanceM <= maxDist + EPS
-    const needDepth = design.floors > 3 ? ruleNumber(rules, 'bma-frontage', 'frontOpenSpaceIfGt3StoreysM') : ruleNumber(rules, 'bma-frontage', 'frontOpenSpaceM')
+    const fronting = isFronting(fr, minFraction, maxDist)
+    const tierStoreys = ruleNumber(rules, 'bma-frontage', 'frontOpenSpaceTierStoreys')
+    const needDepth = design.floors > tierStoreys ? ruleNumber(rules, 'bma-frontage', 'frontOpenSpaceIfGt3StoreysM') : ruleNumber(rules, 'bma-frontage', 'frontOpenSpaceM')
     rows.push({
       ruleId: 'bma-frontage',
       label: 'Fronting the public way',
@@ -250,7 +256,7 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
     rows.push({
       ruleId: 'bma-frontage',
       label: 'Fronting the public way',
-      requirement: 'Applies to buildings > 2 storeys or > 8 m; residential <= 3 storeys exempt.',
+      requirement: `Applies to buildings > ${triggerStoreys} storeys or > ${triggerHeight} m; residential <= ${exemptStoreys} storeys exempt.`,
       actual: `${design.floors} floors, ${m(design.heightM, 1)}`,
       allowed: 'exempt',
       pass: true,
@@ -260,9 +266,9 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   }
 
   // 10. Low-rise definition limits.
-  if (inputs.buildingType === 'lowRiseResidential') {
-    const maxStoreys = typeRules.maxStoreys ?? 3
-    const maxH = typeRules.maxHeightM ?? 10
+  if (typeRules.maxStoreys !== undefined && typeRules.maxHeightM !== undefined) {
+    const maxStoreys = typeRules.maxStoreys
+    const maxH = typeRules.maxHeightM
     rows.push({
       ruleId: 'lowrise-limits',
       label: 'Low-rise definition',

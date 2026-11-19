@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import sourcesMd from '../../../docs/SOURCES.md?raw'
+import sourcesMd from '../rules/SOURCES.md?raw'
 import { ZONE_RULES } from '../rules'
 
 interface SourceRow {

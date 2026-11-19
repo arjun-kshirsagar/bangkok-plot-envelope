@@ -347,7 +347,7 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
     `Gross floor area <= FAR ${far} x ${fmt(A, 0)} m2 = ${fmt(gfaMax, 0)} m2 (BMA-CP ข้อ 17). All storeys count, parking and basements included; FAR bonuses (up to +20%) are not applied.`,
   ]
   if (regime === 'highRise') farNotes.push(`MR-33 ข้อ 5 cap of FAR ${ruleNumber(rules, 'mr33-far-cap', 'far')} does not bind (zone FAR ${far} is lower).`)
-  if (caps.gfaCapNote) farNotes.push(caps.gfaCapNote)
+  if (caps.gfaCapNote) farNotes.push(`GFA cap: ${caps.gfaCapNote}`)
   stages.push({
     id: 'far',
     label: 'Floor area ratio',
@@ -600,15 +600,33 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
     const rowBig = ruleNumber(rules, 'mr33-road-access', 'minRowM_gfaGt30000')
     const tierGfa = rules.thresholds.mr33RoadTierGfaM2
     const W = inputs.roadWidthM
+    const minFrontage = ruleNumber(rules, 'mr33-road-access', 'minFrontageM')
+    const fa = metricRing[frontEdgeIndex]
+    const fb = metricRing[(frontEdgeIndex + 1) % metricRing.length]
+    const frontLen = Math.hypot(fb[0] - fa[0], fb[1] - fa[1])
+    const roadTooNarrow = W < rowSmall - EPS
+    const frontTooShort = frontLen < minFrontage - EPS
 
-    if (W < rowSmall - EPS) {
+    if (roadTooNarrow || frontTooShort) {
       let capped: RegimeComputation
       try {
-        capped = computeRegime(ctx, 'standard', { heightBelowM: hrHeight, gfaBelowM2: hrGfa })
+        capped = computeRegime(ctx, 'standard', {
+          heightBelowM: hrHeight,
+          gfaBelowM2: hrGfa,
+          gfaCapNote: roadTooNarrow
+            ? `held under the ${fmt(hrGfa, 0)} m2 อาคารขนาดใหญ่พิเศษ threshold (MR-33 ข้อ 1) because a high-rise / extra-large building needs a road >= ${rowSmall} m and this road is ${fmt(W)} m (MR-33 ข้อ 2).`
+            : `held under the ${fmt(hrGfa, 0)} m2 อาคารขนาดใหญ่พิเศษ threshold (MR-33 ข้อ 1) because a high-rise / extra-large building needs >= ${minFrontage} m of plot side on the road and the front edge is ${fmt(frontLen)} m (MR-33 ข้อ 2).`,
+        })
       } catch (err) {
         return geometryFailure(plot, A, err)
       }
-      const reason = `Standard setbacks would reach ${why}, but an อาคารสูง / อาคารขนาดใหญ่พิเศษ needs a public road with right-of-way >= ${rowSmall} m (MR-33 ข้อ 2) and this road is ${fmt(W)} m. The envelope is therefore held under ${hrHeight} m and ${fmt(hrGfa, 0)} m2 in the standard regime.`
+      const why2 = [
+        roadTooNarrow ? `a public road with right-of-way >= ${rowSmall} m and this road is ${fmt(W)} m` : null,
+        frontTooShort ? `a plot side of >= ${minFrontage} m on that road and the front edge is ${fmt(frontLen)} m` : null,
+      ]
+        .filter(Boolean)
+        .join(', and ')
+      const reason = `Standard setbacks would reach ${why}, but an อาคารสูง / อาคารขนาดใหญ่พิเศษ needs ${why2} (MR-33 ข้อ 2). The envelope is therefore held under ${hrHeight} m and ${fmt(hrGfa, 0)} m2 in the standard regime.`
       return {
         ok: capped.envelope !== null,
         stages: capped.stages,
@@ -616,21 +634,29 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
         metric: capped.metric,
         regime: 'standard',
         regimeReason: reason,
-        alternatives: [summary(standard, 'Standard setbacks, uncapped (not permitted)', `Would reach ${why}, which needs a >= ${rowSmall} m road; shown only to explain the cap.`)],
-        warnings: [...warnings, `Road right-of-way ${fmt(W)} m < ${rowSmall} m: high-rise / extra-large buildings are not permitted on this plot (MR-33 ข้อ 2).`],
+        alternatives: [summary(standard, 'Standard setbacks, uncapped (not permitted)', `Would reach ${why}, which MR-33 ข้อ 2 does not permit on this road / frontage; shown only to explain the cap.`)],
+        warnings: [
+          ...warnings,
+          ...(roadTooNarrow ? [`Road right-of-way ${fmt(W)} m < ${rowSmall} m: high-rise / extra-large buildings are not permitted on this plot (MR-33 ข้อ 2).`] : []),
+          ...(frontTooShort ? [`Front edge ${fmt(frontLen)} m < ${minFrontage} m: a high-rise / extra-large building needs >= ${minFrontage} m of plot side on the public road (MR-33 ข้อ 2), so it is not permitted here.`] : []),
+        ],
         annotations: [reason],
       }
     }
 
     const hrCaps: Caps =
       W < rowBig - EPS
-        ? { gfaBelowM2: tierGfa + 1e-6, gfaCapNote: `MR-33 ข้อ 2: a road under ${rowBig} m right-of-way (here ${fmt(W)} m) limits the building to ${fmt(tierGfa, 0)} m2 of gross floor area.` }
+        ? { gfaBelowM2: tierGfa + 1e-6, gfaCapNote: `a road under ${rowBig} m right-of-way (here ${fmt(W)} m) limits the building to ${fmt(tierGfa, 0)} m2 of gross floor area (MR-33 ข้อ 2).` }
         : {}
     let highRise: RegimeComputation
     let capped: RegimeComputation
     try {
       highRise = computeRegime(ctx, 'highRise', hrCaps)
-      capped = computeRegime(ctx, 'standard', { heightBelowM: hrHeight, gfaBelowM2: hrGfa })
+      capped = computeRegime(ctx, 'standard', {
+        heightBelowM: hrHeight,
+        gfaBelowM2: hrGfa,
+        gfaCapNote: `held under the ${fmt(hrGfa, 0)} m2 อาคารขนาดใหญ่พิเศษ threshold (MR-33 ข้อ 1) so the building stays in the standard regime.`,
+      })
     } catch (err) {
       return geometryFailure(plot, A, err)
     }
@@ -673,6 +699,21 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
     }
   }
 
+  if (!e) {
+    const m = standard.metric
+    const consumed = `Nothing can be built: the ${fmt(m.frontSetbackM, 2)} m road setback and ${fmt(m.boundarySetbackM, 2)} m boundary setbacks${m.afterBoundarySetback ? ' plus the open-space rules' : ''} consume this ${fmt(A, 0)} m2 plot. Draw a wider plot or check the outline.`
+    return {
+      ok: false,
+      stages: standard.stages,
+      envelope: null,
+      metric: standard.metric,
+      regime: 'standard',
+      regimeReason: consumed,
+      alternatives: [],
+      warnings: [...warnings, consumed],
+      annotations: [consumed],
+    }
+  }
   const reason = canHighRise
     ? `Standard-regime envelope stays under ${hrHeight} m and ${fmt(hrGfa, 0)} m2 (height ${fmt(e?.heightM ?? 0)} m, GFA ${fmt(e?.gfaM2 ?? 0, 0)} m2), so MR-33 does not apply.`
     : `${typeRules.label.split(' (')[0]}: standard regime only (max ${typeRules.maxStoreys ?? '-'} storeys, ${typeRules.maxHeightM ?? '-'} m).`

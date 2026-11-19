@@ -7,7 +7,7 @@ import { ringCentroid } from '../engine/geometry'
 import { plotAreaM2, plotEdges, outerRing, validatePlot, type PlotEdge, type PlotValidation } from '../engine/plot'
 import { EMPTY_PIPELINE_RESULT, runPipeline, type PipelineResult } from '../engine/pipeline'
 import { ringToMetric, toWgs84, type LngLat } from '../engine/projection'
-import { ZONE_RULES, findSubzone, type SubzoneProps } from '../rules'
+import { ZONE_BBOX, ZONE_RULES, findSubzone, type SubzoneProps } from '../rules'
 import { generateDesigns } from '../designs/templates'
 import type { Design } from '../designs/types'
 import { evaluateChecks } from '../checks/evaluate'
@@ -41,16 +41,28 @@ export function usePlotValidation(): PlotValidation {
 
 export interface ZoneCheck {
   centroid: LngLat
+  /** Sub-zone containing the plot centroid (the one used), or null when outside Y.10. */
   subzone: SubzoneProps | null
+  /** Distinct sub-zones (or 'outside Y.10') touched by the plot's vertices, when more than one. */
+  straddles: string[] | null
+  /** Some vertex lies outside the mapped Y.10 area (bounding box of all sub-zones). */
+  outsideMapArea: boolean
 }
 
-/** Which Y.10 sub-zone (if any) contains the plot centroid. */
+/** Which Y.10 sub-zone (if any) contains the plot centroid, and whether the plot straddles a boundary. */
 export function selectZone(state: Pick<AppState, 'plot'>): ZoneCheck | null {
   const plot = state.plot
   if (!plot || !validatePlot(plot).ok) return null
-  const c = ringCentroid(ringToMetric(outerRing(plot)))
+  const ring = outerRing(plot)
+  const c = ringCentroid(ringToMetric(ring))
   const centroid = toWgs84(c)
-  return { centroid, subzone: findSubzone(centroid) }
+  const codes = new Set<string>()
+  let outsideMapArea = false
+  for (const p of ring) {
+    codes.add(findSubzone([p[0], p[1]])?.code ?? 'outside Y.10')
+    if (p[0] < ZONE_BBOX[0] || p[0] > ZONE_BBOX[2] || p[1] < ZONE_BBOX[1] || p[1] > ZONE_BBOX[3]) outsideMapArea = true
+  }
+  return { centroid, subzone: findSubzone(centroid), straddles: codes.size > 1 ? [...codes].sort() : null, outsideMapArea }
 }
 
 export function useZone(): ZoneCheck | null {

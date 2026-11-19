@@ -37,6 +37,8 @@ export interface AppState extends SceneInputs {
   stageVisibility: StageVisibility
   selectedDesignId: DesignId
   designOverrides: DesignOverrideMap
+  /** Last drawing-tool validation message (self-intersection, vertex cap), null when valid. Not in the URL. */
+  drawNotice: string | null
 
   setPlot: (plot: Polygon | null) => void
   clearPlot: () => void
@@ -52,6 +54,7 @@ export interface AppState extends SceneInputs {
   selectDesign: (id: DesignId) => void
   setDesignOverride: (id: DesignId, patch: DesignOverrides) => void
   resetDesignOverrides: (id?: DesignId) => void
+  setDrawNotice: (notice: string | null) => void
   hydrate: (scene: Partial<SceneInputs> & { roadWidthSource?: RoadWidthSource; view?: MapView | null; selectedDesignId?: DesignId; designOverrides?: DesignOverrideMap }) => void
 }
 
@@ -77,6 +80,7 @@ export const useAppStore = create<AppState>()((set) => ({
   stageVisibility: DEFAULT_STAGE_VISIBILITY,
   selectedDesignId: 'slab',
   designOverrides: {},
+  drawNotice: null,
 
   setPlot: (plot) =>
     set((state) => ({
@@ -97,7 +101,7 @@ export const useAppStore = create<AppState>()((set) => ({
   setFloorToFloor: (m) => set({ floorToFloorM: Math.min(FLOOR_TO_FLOOR_RANGE[1], Math.max(FLOOR_TO_FLOOR_RANGE[0], m)) }),
 
   // Entering draw mode starts a fresh plot: the old plot, front edge and road are dropped.
-  setMode: (mode) => set(mode === 'draw' ? { ...EMPTY_PLOT_STATE, mode } : { mode }),
+  setMode: (mode) => set(mode === 'draw' ? { ...EMPTY_PLOT_STATE, mode, drawNotice: null } : { mode, drawNotice: null }),
 
   setBuildingsSource: (buildingsSource) => set({ buildingsSource }),
 
@@ -122,6 +126,8 @@ export const useAppStore = create<AppState>()((set) => ({
       delete copy[id]
       return { designOverrides: copy }
     }),
+
+  setDrawNotice: (drawNotice) => set({ drawNotice }),
 
   hydrate: (scene) => set((state) => ({ ...state, ...scene })),
 }))
