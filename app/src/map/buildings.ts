@@ -52,11 +52,12 @@ export function startBuildingHeightCheck(map: MapLibreMap, onResult: (source: Bu
     )
     finish(ratio >= 0.5 ? 'tiles' : 'overpass')
   }
+  let stopFallback: (() => void) | null = null
   const finish = (source: BuildingsSource) => {
     done = true
     map.off('idle', onIdle)
     if (source === 'overpass') {
-      enableOverpassFallback(map, onResult)
+      stopFallback = enableOverpassFallback(map, onResult)
     } else {
       onResult(source)
     }
@@ -65,10 +66,12 @@ export function startBuildingHeightCheck(map: MapLibreMap, onResult: (source: Bu
   return () => {
     done = true
     map.off('idle', onIdle)
+    stopFallback?.()
   }
 }
 
-function enableOverpassFallback(map: MapLibreMap, onResult: (source: BuildingsSource) => void): void {
+/** Returns a cleanup that removes the moveend listener, pending timer and in-flight fetch. */
+function enableOverpassFallback(map: MapLibreMap, onResult: (source: BuildingsSource) => void): () => void {
   if (map.getLayer(BUILDING_3D_LAYER_ID)) map.setLayoutProperty(BUILDING_3D_LAYER_ID, 'visibility', 'none')
   if (!map.getSource(OVERPASS_SOURCE_ID)) {
     map.addSource(OVERPASS_SOURCE_ID, { type: 'geojson', data: emptyCollection() })
@@ -119,6 +122,11 @@ function enableOverpassFallback(map: MapLibreMap, onResult: (source: BuildingsSo
   }
   map.on('moveend', schedule)
   schedule()
+  return () => {
+    map.off('moveend', schedule)
+    if (timer) clearTimeout(timer)
+    controller?.abort()
+  }
 }
 
 function setData(map: MapLibreMap, fc: FeatureCollection): void {

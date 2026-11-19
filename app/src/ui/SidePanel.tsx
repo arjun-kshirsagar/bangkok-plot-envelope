@@ -1,14 +1,50 @@
 import { useState } from 'react'
-import { BUILDING_TYPES, isBuildingType } from '../rules'
-import { useAppStore, useFrontEdge, usePipelineResult, usePlotArea, usePlotEdges, usePlotValidation } from '../store'
+import { STAGE_IDS, ruleSource, type StageId } from '../engine/pipeline'
+import { BUILDING_TYPES, ZONE_RULES, isBuildingType } from '../rules'
+import {
+  FLOOR_TO_FLOOR_RANGE,
+  useAppStore,
+  useFrontEdge,
+  usePipelineResult,
+  usePlotArea,
+  usePlotEdges,
+  usePlotValidation,
+  useZone,
+} from '../store'
 import { formatArea, formatLength, formatThaiLandUnits } from './format'
+import { RoadWidthInput } from './RoadWidthInput'
 
 const MODE_HINTS: Record<string, string> = {
   idle: 'Draw a plot to begin, or move the map with drag (rotate with right-drag or Ctrl+drag).',
   draw: 'Click to place vertices. Click the first point or double-click to close. Esc cancels.',
   edit: 'Drag a vertex to move it, drag a midpoint to add a vertex, right-click a vertex to remove it. Delete key removes the plot.',
-  pickFront: 'Click the edge of the plot that faces the road.',
+  pickFront: 'Click the edge of the plot that faces the road. Esc cancels.',
 }
+
+const STAGE_LABELS: Record<StageId, string> = {
+  plot: 'Plot',
+  roadSetback: 'Road setback',
+  boundarySetback: 'Boundary setback',
+  height: 'Height cap',
+  far: 'FAR',
+  openSpace: 'Open space',
+  envelope: 'Envelope',
+}
+
+const TOGGLEABLE: StageId[] = ['roadSetback', 'boundarySetback', 'openSpace', 'envelope']
+
+function Src({ ids }: { ids: string[] }) {
+  if (ids.length === 0) return null
+  return (
+    <span className="src" title={ids.map((id) => `${id}: ${ruleSource(ZONE_RULES, id)}`).join('\n')}>
+      {ids.join(', ')}
+    </span>
+  )
+}
+
+const n0 = (v: number) => Math.round(v).toLocaleString('en-GB')
+const n1 = (v: number) => v.toLocaleString('en-GB', { maximumFractionDigits: 1, minimumFractionDigits: 1 })
+const n2 = (v: number) => v.toLocaleString('en-GB', { maximumFractionDigits: 2 })
 
 export function SidePanel() {
   const plot = useAppStore((s) => s.plot)
@@ -22,15 +58,21 @@ export function SidePanel() {
   const setRoadWidth = useAppStore((s) => s.setRoadWidth)
   const buildingType = useAppStore((s) => s.buildingType)
   const setBuildingType = useAppStore((s) => s.setBuildingType)
+  const floorToFloorM = useAppStore((s) => s.floorToFloorM)
+  const setFloorToFloor = useAppStore((s) => s.setFloorToFloor)
   const buildingsSource = useAppStore((s) => s.buildingsSource)
+  const stageVisibility = useAppStore((s) => s.stageVisibility)
+  const toggleStage = useAppStore((s) => s.toggleStage)
 
   const area = usePlotArea()
   const edges = usePlotEdges()
   const frontEdge = useFrontEdge()
   const validation = usePlotValidation()
   const pipeline = usePipelineResult()
+  const zone = useZone()
 
   const [copied, setCopied] = useState(false)
+  const [showStages, setShowStages] = useState(true)
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(window.location.href)
@@ -43,12 +85,16 @@ export function SidePanel() {
 
   const hasPlot = plot !== null
   const plotOk = validation.ok
+  const env = pipeline.envelope
+  const stage = (id: StageId) => pipeline.stages.find((s) => s.id === id)
 
   return (
     <aside className="panel" aria-label="Inputs and results">
       <header className="panel-header">
         <h1>Bangkok plot feasibility</h1>
-        <p className="muted">Sukhumvit / Asok. Draw a plot, pick its road edge, choose a building type.</p>
+        <p className="muted">
+          Zone {ZONE_RULES.zone.code} ({ZONE_RULES.zone.thaiCode}), Sukhumvit Phrom Phong - Thong Lo. FAR {ZONE_RULES.zone.far}, OSR {ZONE_RULES.zone.osrPercent}%.
+        </p>
       </header>
 
       <section className="section">
@@ -75,6 +121,16 @@ export function SidePanel() {
           <dd>{edges.length || '—'}</dd>
           <dt>Perimeter</dt>
           <dd>{formatLength(edges.length ? edges.reduce((s, e) => s + e.lengthM, 0) : null)}</dd>
+          <dt>Zone</dt>
+          <dd>
+            {zone === null ? (
+              <span className="muted">—</span>
+            ) : zone.subzone ? (
+              <span className="badge ok">inside {zone.subzone.code} · FAR {zone.subzone.far} · OSR {zone.subzone.osrPercent}%</span>
+            ) : (
+              <span className="badge warn">Plot is outside zone Y.10 (approximate boundary); Y.10 rules still applied</span>
+            )}
+          </dd>
         </dl>
         {hasPlot && !plotOk && <p className="warn">{validation.reason}</p>}
       </section>
@@ -105,31 +161,17 @@ export function SidePanel() {
           <dt>Road</dt>
           <dd>{roadInfo ?? <span className="muted">—</span>}</dd>
           <dt>
-            <label htmlFor="road-width">Road width</label>
+            <label htmlFor="road-width">Right-of-way</label>
           </dt>
           <dd>
-            <div className="input-row">
-              <input
-                id="road-width"
-                type="number"
-                min={1}
-                max={100}
-                step={0.5}
-                value={roadWidthM}
-                onChange={(e) => {
-                  const v = Number(e.target.value)
-                  if (Number.isFinite(v) && v > 0) setRoadWidth(v, { kind: 'manual', detail: 'Entered manually.' })
-                }}
-              />
-              <span className="unit">m</span>
-            </div>
+            <RoadWidthInput valueM={roadWidthM} onCommit={(m) => setRoadWidth(m, { kind: 'manual', detail: 'Entered manually.' })} />
             <span className={`sub source source-${roadWidthSource.kind}`}>{roadWidthSource.detail}</span>
           </dd>
         </dl>
       </section>
 
       <section className="section">
-        <h2>3 · Building type</h2>
+        <h2>3 · Building</h2>
         <select
           aria-label="Building type"
           value={buildingType}
@@ -144,25 +186,182 @@ export function SidePanel() {
           ))}
         </select>
         <p className="hint">{BUILDING_TYPES.find((t) => t.id === buildingType)?.description}</p>
+        <label className="slider">
+          <span>
+            Floor-to-floor <strong>{n2(floorToFloorM)} m</strong>
+          </span>
+          <input
+            type="range"
+            min={FLOOR_TO_FLOOR_RANGE[0]}
+            max={FLOOR_TO_FLOOR_RANGE[1]}
+            step={0.1}
+            value={floorToFloorM}
+            onChange={(e) => setFloorToFloor(Number(e.target.value))}
+            aria-label="Floor-to-floor height in metres"
+          />
+          <span className="sub">Legal minimum 2.6 m for dwellings (MR-55 ข้อ 22); 3.0 m is a typical Bangkok condo.</span>
+        </label>
       </section>
 
       <section className="section">
         <h2>4 · Envelope</h2>
-        {pipeline.stages.length === 0 ? (
-          <p className="muted">{pipeline.annotations[0] ?? 'Draw a valid plot and pick its front edge to see the buildable envelope.'}</p>
+        {!pipeline.ok || !env ? (
+          <>
+            <p className="muted">{pipeline.annotations[0] ?? 'Draw a valid plot and pick its front edge to see the buildable envelope.'}</p>
+            {pipeline.stages.find((s) => s.id === 'envelope')?.annotations.map((a, i) => (
+              <p key={i} className="warn">
+                {a}
+              </p>
+            ))}
+          </>
         ) : (
-          <ul className="stages">
-            {pipeline.stages.map((st) => (
-              <li key={st.id}>
-                <strong>{st.label}</strong>
-                {st.annotations.map((a, i) => (
-                  <div key={i} className="sub">
-                    {a}
+          <>
+            <div className={`regime regime-${pipeline.regime}`}>
+              <strong>{pipeline.regime === 'highRise' ? 'High-rise / extra-large regime (MR-33)' : 'Standard regime (MR-55 + BMA bylaw)'}</strong>
+              <span className="sub">{pipeline.regimeReason}</span>
+            </div>
+            {pipeline.warnings.map((w, i) => (
+              <p key={i} className="warn">
+                {w}
+              </p>
+            ))}
+            <table className="numbers">
+              <tbody>
+                <tr>
+                  <th>Plot area</th>
+                  <td>{n0(stage('plot')?.numbers.plotAreaM2 ?? 0)} m²</td>
+                  <td>
+                    <Src ids={['road-width-definition']} />
+                  </td>
+                </tr>
+                <tr>
+                  <th>Front (road) setback</th>
+                  <td>{n2(stage('roadSetback')?.numbers.frontSetbackM ?? 0)} m</td>
+                  <td>
+                    <Src ids={stage('roadSetback')?.sources ?? []} />
+                  </td>
+                </tr>
+                <tr>
+                  <th>Boundary setback</th>
+                  <td>{n2(stage('boundarySetback')?.numbers.boundarySetbackM ?? 0)} m</td>
+                  <td>
+                    <Src ids={stage('boundarySetback')?.sources ?? []} />
+                  </td>
+                </tr>
+                <tr>
+                  <th>Footprint</th>
+                  <td>
+                    {n0(env.footprintAreaM2)} m² <span className="sub-inline">({Math.round(env.coverage * 100)}% coverage, limited by {env.footprintLimitedBy === 'setbacks' ? 'setbacks' : env.footprintLimitedBy === 'osr' ? 'OSR 4%' : '30% open space'})</span>
+                  </td>
+                  <td>
+                    <Src ids={stage('openSpace')?.sources ?? []} />
+                  </td>
+                </tr>
+                <tr>
+                  <th>Max height</th>
+                  <td>{n1(env.maxHeightM)} m</td>
+                  <td>
+                    <Src ids={['mr55-height-road']} />
+                  </td>
+                </tr>
+                <tr>
+                  <th>Max floors</th>
+                  <td>
+                    {env.maxFloors} <span className="sub-inline">({n1(env.heightM)} m built; by height {env.floorsByHeight}, by FAR {env.floorsByFar})</span>
+                  </td>
+                  <td>
+                    <Src ids={['floor-to-floor', 'height-measurement']} />
+                  </td>
+                </tr>
+                <tr>
+                  <th>GFA cap (FAR {ZONE_RULES.zone.far})</th>
+                  <td>{n0(env.maxGfaM2)} m²</td>
+                  <td>
+                    <Src ids={['zone-far', 'far-counts-all-floors']} />
+                  </td>
+                </tr>
+                <tr>
+                  <th>GFA in envelope</th>
+                  <td>
+                    {n0(env.gfaM2)} m² <span className="sub-inline">({Math.round((100 * env.gfaM2) / env.maxGfaM2)}% of cap)</span>
+                  </td>
+                  <td />
+                </tr>
+                <tr>
+                  <th>Open space</th>
+                  <td>
+                    {n0(env.openSpaceM2)} m² <span className="sub-inline">(need {n0(env.openSpaceRequiredM2)}; OSR {n1((100 * env.openSpaceM2) / Math.max(env.gfaM2, 1))}% of GFA)</span>
+                  </td>
+                  <td>
+                    <Src ids={['zone-osr', 'bcl-open-space-plot']} />
+                  </td>
+                </tr>
+                <tr>
+                  <th>Binding rule</th>
+                  <td>
+                    <span className={`badge ${env.bindingRule}`}>{env.bindingRule === 'height' ? 'Height (2 x road)' : env.bindingRule === 'far' ? 'FAR' : 'Footprint'}</span>
+                  </td>
+                  <td />
+                </tr>
+                {env.parking && (
+                  <tr>
+                    <th>Parking (indicative)</th>
+                    <td>
+                      {env.parking.spaces} spaces, {n0(env.parking.areaM2)} m² <span className="sub-inline">saleable ~{n0(env.parking.saleableGfaM2)} m²</span>
+                    </td>
+                    <td>
+                      <Src ids={['bma-parking-indicative']} />
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+
+            {pipeline.alternatives.length > 0 && (
+              <div className="alternatives">
+                {pipeline.alternatives.map((alt) => (
+                  <div key={alt.label} className="alt">
+                    <strong>{alt.label}</strong>
+                    <span>
+                      {alt.maxFloors} floors · {n1(alt.heightM)} m · footprint {n0(alt.footprintAreaM2)} m² · GFA {n0(alt.gfaM2)} m²
+                    </span>
+                    <span className="sub">{alt.note}</span>
                   </div>
                 ))}
-              </li>
-            ))}
-          </ul>
+              </div>
+            )}
+
+            <div className="stage-toggles">
+              {TOGGLEABLE.map((id) => (
+                <label key={id} className="toggle">
+                  <input type="checkbox" checked={stageVisibility[id]} onChange={() => toggleStage(id)} />
+                  <span className={`swatch stage-${id}`} /> {STAGE_LABELS[id]}
+                </label>
+              ))}
+            </div>
+
+            <button type="button" className="link" onClick={() => setShowStages((v) => !v)}>
+              {showStages ? 'Hide' : 'Show'} rule-by-rule notes
+            </button>
+            {showStages && (
+              <ol className="stages">
+                {STAGE_IDS.map((id) => stage(id)).map(
+                  (st) =>
+                    st && (
+                      <li key={st.id}>
+                        <strong>{st.label}</strong>
+                        {st.annotations.map((a, i) => (
+                          <div key={i} className="sub">
+                            {a}
+                          </div>
+                        ))}
+                        <Src ids={st.sources} />
+                      </li>
+                    ),
+                )}
+              </ol>
+            )}
+          </>
         )}
       </section>
 
@@ -176,7 +375,7 @@ export function SidePanel() {
           {buildingsSource === 'overpass' && 'Overpass API (height / levels × 3.5 m / 12 m)'}
           {buildingsSource === 'overpass-failed' && 'Overpass API (unreachable, heights missing)'}
           {buildingsSource === 'unknown' && 'OpenFreeMap tiles (checking heights…)'}
-          . Lengths and areas are planar in UTM 47N (EPSG:32647).
+          . Zone boundary from BMA GIS, approximate (±50-100 m). Lengths and areas are planar in UTM 47N (EPSG:32647). Rules as of Nov 2026: Bangkok Comprehensive Plan B.E. 2556, MR-55, MR-33, BMA Building Bylaw B.E. 2544. Not legal advice.
         </p>
       </footer>
     </aside>

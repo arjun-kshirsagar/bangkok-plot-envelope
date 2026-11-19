@@ -3,8 +3,11 @@
  * so there is nothing to "recalculate" manually.
  */
 import { useMemo } from 'react'
-import { plotAreaM2, plotEdges, validatePlot, type PlotEdge, type PlotValidation } from '../engine/plot'
+import { ringCentroid } from '../engine/geometry'
+import { plotAreaM2, plotEdges, outerRing, validatePlot, type PlotEdge, type PlotValidation } from '../engine/plot'
 import { EMPTY_PIPELINE_RESULT, runPipeline, type PipelineResult } from '../engine/pipeline'
+import { ringToMetric, toWgs84, type LngLat } from '../engine/projection'
+import { ZONE_RULES, findSubzone, type SubzoneProps } from '../rules'
 import { useAppStore, type AppState } from './useAppStore'
 
 /**
@@ -32,14 +35,37 @@ export function usePlotValidation(): PlotValidation {
   return useMemo(() => validatePlot(plot), [plot])
 }
 
+export interface ZoneCheck {
+  centroid: LngLat
+  subzone: SubzoneProps | null
+}
+
+/** Which Y.10 sub-zone (if any) contains the plot centroid. */
+export function selectZone(state: Pick<AppState, 'plot'>): ZoneCheck | null {
+  const plot = state.plot
+  if (!plot || !validatePlot(plot).ok) return null
+  const c = ringCentroid(ringToMetric(outerRing(plot)))
+  const centroid = toWgs84(c)
+  return { centroid, subzone: findSubzone(centroid) }
+}
+
+export function useZone(): ZoneCheck | null {
+  const plot = useAppStore((s) => s.plot)
+  return useMemo(() => selectZone({ plot }), [plot])
+}
+
 export function selectPipeline(state: AppState): PipelineResult {
   if (!validatePlot(state.plot).ok) return EMPTY_PIPELINE_RESULT
-  return runPipeline({
-    plot: state.plot,
-    frontEdgeIndex: state.frontEdgeIndex,
-    roadWidthM: state.roadWidthM,
-    buildingType: state.buildingType,
-  })
+  return runPipeline(
+    {
+      plot: state.plot,
+      frontEdgeIndex: state.frontEdgeIndex,
+      roadWidthM: state.roadWidthM,
+      buildingType: state.buildingType,
+      floorToFloorM: state.floorToFloorM,
+    },
+    ZONE_RULES,
+  )
 }
 
 export function usePipelineResult(): PipelineResult {
@@ -47,8 +73,9 @@ export function usePipelineResult(): PipelineResult {
   const frontEdgeIndex = useAppStore((s) => s.frontEdgeIndex)
   const roadWidthM = useAppStore((s) => s.roadWidthM)
   const buildingType = useAppStore((s) => s.buildingType)
+  const floorToFloorM = useAppStore((s) => s.floorToFloorM)
   return useMemo(() => {
     if (!validatePlot(plot).ok) return EMPTY_PIPELINE_RESULT
-    return runPipeline({ plot, frontEdgeIndex, roadWidthM, buildingType })
-  }, [plot, frontEdgeIndex, roadWidthM, buildingType])
+    return runPipeline({ plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM }, ZONE_RULES)
+  }, [plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM])
 }

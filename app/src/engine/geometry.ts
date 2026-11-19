@@ -55,3 +55,39 @@ export function closeRing(ring: Position[]): Position[] {
   const open = dropClosingPoint(ring)
   return open.length ? [...open, open[0]] : open
 }
+
+/** Signed area (positive = counter-clockwise in a y-up frame). */
+export function signedRingArea(ring: Position[]): number {
+  const pts = dropClosingPoint(ring)
+  const n = pts.length
+  if (n < 3) return 0
+  let sum = 0
+  for (let i = 0; i < n; i++) {
+    const [x1, y1] = pts[i]
+    const [x2, y2] = pts[(i + 1) % n]
+    sum += x1 * y2 - x2 * y1
+  }
+  return sum / 2
+}
+
+/** Area-weighted centroid of a simple ring (metric frame). Falls back to the vertex mean. */
+export function ringCentroid(ring: Position[]): XY {
+  const pts = dropClosingPoint(ring)
+  const n = pts.length
+  if (n === 0) return [0, 0]
+  let a = 0
+  let cx = 0
+  let cy = 0
+  for (let i = 0; i < n; i++) {
+    const [x1, y1] = pts[i]
+    const [x2, y2] = pts[(i + 1) % n]
+    const cross = x1 * y2 - x2 * y1
+    a += cross
+    cx += (x1 + x2) * cross
+    cy += (y1 + y2) * cross
+  }
+  if (Math.abs(a) < 1e-9) {
+    return [pts.reduce((s, p) => s + p[0], 0) / n, pts.reduce((s, p) => s + p[1], 0) / n]
+  }
+  return [cx / (3 * a), cy / (3 * a)]
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Polygon } from 'geojson'
-import { decodeScene, encodeScene, type UrlScene } from './urlState'
+import { decodeScene, encodeScene, inBangkok, type UrlScene } from './urlState'
 
 const plot: Polygon = {
   type: 'Polygon',
@@ -22,30 +22,56 @@ describe('URL scene state', () => {
       frontEdgeIndex: 2,
       roadWidthM: 16.5,
       buildingType: 'lowRiseResidential',
-      view: { zoom: 16.5, lat: 13.737, lng: 100.561, pitch: 55, bearing: -20 },
+      floorToFloorM: 3.2,
+      view: { zoom: 16.5, lat: 13.737, lng: 100.561, pitch: 55, bearing: 340 },
     }
     const hash = encodeScene(scene)
     expect(hash).toContain('plot=')
     expect(hash).toContain('front=2')
     expect(hash).toContain('type=lowRiseResidential')
+    expect(hash).toContain('f2f=3.2')
     const back = decodeScene(`#${hash}`)
     expect(back.plot).toEqual(plot)
     expect(back.frontEdgeIndex).toBe(2)
     expect(back.roadWidthM).toBe(16.5)
     expect(back.buildingType).toBe('lowRiseResidential')
+    expect(back.floorToFloorM).toBe(3.2)
     expect(back.view).toEqual(scene.view)
   })
 
   it('ignores garbage and returns an empty scene', () => {
-    const back = decodeScene('#plot=abc&front=-1&road=nope&type=castle&view=1/2')
+    const back = decodeScene('#plot=abc&front=-1&road=nope&type=castle&f2f=9&view=1/2')
     expect(back.plot).toBeNull()
     expect(back.frontEdgeIndex).toBeNull()
     expect(back.roadWidthM).toBeNull()
     expect(back.buildingType).toBeNull()
+    expect(back.floorToFloorM).toBeNull()
     expect(back.view).toBeNull()
   })
 
+  it('rejects plots outside Bangkok, self-intersecting plots and out-of-range front indices', () => {
+    expect(decodeScene('#plot=1,2;3,4;5,6&front=0').plot).toBeNull()
+    expect(decodeScene('#plot=1,2;3,4;5,6&front=0').frontEdgeIndex).toBeNull()
+    expect(inBangkok(100.56, 13.74)).toBe(true)
+    expect(inBangkok(1, 2)).toBe(false)
+    // bow-tie
+    const bow = decodeScene('#plot=100.561,13.737;100.562,13.738;100.562,13.737;100.561,13.738')
+    expect(bow.plot).toBeNull()
+    // front index beyond the edge count is dropped but the plot is kept
+    const far = decodeScene('#plot=100.561,13.737;100.562,13.737;100.562,13.738;100.561,13.738&front=9')
+    expect(far.plot).not.toBeNull()
+    expect(far.frontEdgeIndex).toBeNull()
+  })
+
+  it('clamps or drops absurd views', () => {
+    expect(decodeScene('#view=16/500/100.56/55/0').view).toBeNull()
+    const v = decodeScene('#view=99/13.73/100.56/120/-20').view!
+    expect(v.zoom).toBe(24)
+    expect(v.pitch).toBe(75)
+    expect(v.bearing).toBe(340)
+  })
+
   it('encodes nothing for an empty scene', () => {
-    expect(encodeScene({ plot: null, frontEdgeIndex: null, roadWidthM: null, buildingType: null, view: null })).toBe('')
+    expect(encodeScene({ plot: null, frontEdgeIndex: null, roadWidthM: null, buildingType: null, floorToFloorM: null, view: null })).toBe('')
   })
 })

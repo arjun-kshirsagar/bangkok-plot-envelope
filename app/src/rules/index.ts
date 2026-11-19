@@ -1,9 +1,12 @@
 /**
- * Rule types. The zone rule JSON (bangkok-<zone>.json) is authored by the research
- * track; every number in it must carry a `source`. This file only holds shared types.
+ * Rule types and the loaded Y.10 rule set. The zone rule JSON is authored by the
+ * research track; every number in it carries a `source`.
  */
+export type { BuildingType, Regime, ZoneRules, RuleEntry, BuildingTypeRules } from './types'
+export { ZONE_RULES, loadRules, getRule, ruleNumber, buildingTypeRules } from './loadRules'
+export { ZONE_SUBZONES, ZONE_BBOX, ZONE_CENTER, findSubzone, thaiDigitsToLatin, type SubzoneProps } from './zone'
 
-export type BuildingType = 'condo' | 'lowRiseResidential'
+import type { BuildingType } from './types'
 
 export interface BuildingTypeOption {
   id: BuildingType
@@ -12,8 +15,16 @@ export interface BuildingTypeOption {
 }
 
 export const BUILDING_TYPES: readonly BuildingTypeOption[] = [
-  { id: 'condo', label: 'Condominium (high-rise residential)', description: 'Residential building, typically >= 23 m, large-building rules apply.' },
-  { id: 'lowRiseResidential', label: 'Low-rise residential', description: 'Residential building under 23 m.' },
+  {
+    id: 'condo',
+    label: 'Condominium (อาคารอยู่อาศัยรวม)',
+    description: 'Apartment / condo block. Switches to the MR-33 high-rise regime at 23 m or 10,000 m2.',
+  },
+  {
+    id: 'lowRiseResidential',
+    label: 'Low-rise residential (<= 3 storeys)',
+    description: 'House / townhouse, max 3 storeys and 10 m. Standard regime only.',
+  },
 ]
 
 export const DEFAULT_BUILDING_TYPE: BuildingType = 'condo'

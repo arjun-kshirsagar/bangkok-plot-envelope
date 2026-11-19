@@ -3,19 +3,31 @@
  *
  * Format (all optional):
  *   #plot=lng,lat;lng,lat;...  front=<edge index>  road=<metres>  type=<buildingType>
- *    view=<zoom>/<lat>/<lng>/<pitch>/<bearing>
+ *    f2f=<metres>  view=<zoom>/<lat>/<lng>/<pitch>/<bearing>
+ *
+ * Everything read from the hash is untrusted: coordinates must fall inside a
+ * Bangkok bounding box, the plot must validate, and the view is clamped.
  */
 import type { Polygon } from 'geojson'
+import { validatePlot } from '../engine/plot'
 import { isBuildingType, type BuildingType } from '../rules'
 import type { MapView } from './types'
-import { DEFAULT_ROAD_WIDTH_M, useAppStore, type AppState } from './useAppStore'
+import { DEFAULT_FLOOR_TO_FLOOR_M, DEFAULT_ROAD_WIDTH_M, FLOOR_TO_FLOOR_RANGE, useAppStore, type AppState } from './useAppStore'
 
 export interface UrlScene {
   plot: Polygon | null
   frontEdgeIndex: number | null
   roadWidthM: number | null
   buildingType: BuildingType | null
+  floorToFloorM: number | null
   view: MapView | null
+}
+
+/** Accepted coordinate window: greater Bangkok. */
+export const BANGKOK_BBOX = { west: 100.3, south: 13.5, east: 100.95, north: 13.95 } as const
+
+export function inBangkok(lng: number, lat: number): boolean {
+  return lng >= BANGKOK_BBOX.west && lng <= BANGKOK_BBOX.east && lat >= BANGKOK_BBOX.south && lat <= BANGKOK_BBOX.north
 }
 
 const COORD_DECIMALS = 7
@@ -33,6 +45,7 @@ export function encodeScene(scene: UrlScene): string {
   if (scene.frontEdgeIndex !== null) params.set('front', String(scene.frontEdgeIndex))
   if (scene.roadWidthM !== null) params.set('road', fmt(scene.roadWidthM, 2))
   if (scene.buildingType) params.set('type', scene.buildingType)
+  if (scene.floorToFloorM !== null) params.set('f2f', fmt(scene.floorToFloorM, 2))
   if (scene.view) {
     const v = scene.view
     params.set('view', [fmt(v.zoom, 2), fmt(v.lat, 6), fmt(v.lng, 6), fmt(v.pitch, 1), fmt(v.bearing, 1)].join('/'))
@@ -44,7 +57,7 @@ export function encodeScene(scene: UrlScene): string {
 export function decodeScene(hash: string): UrlScene {
   const raw = hash.startsWith('#') ? hash.slice(1) : hash
   const params = new URLSearchParams(raw)
-  const scene: UrlScene = { plot: null, frontEdgeIndex: null, roadWidthM: null, buildingType: null, view: null }
+  const scene: UrlScene = { plot: null, frontEdgeIndex: null, roadWidthM: null, buildingType: null, floorToFloorM: null, view: null }
 
   const plot = params.get('plot')
   if (plot) {
@@ -52,32 +65,52 @@ export function decodeScene(hash: string): UrlScene {
       .split(';')
       .map((pair) => pair.split(',').map(Number))
       .filter((p) => p.length === 2 && p.every(Number.isFinite))
-    if (pts.length >= 3) {
+    const allInside = pts.length >= 3 && pts.length <= 200 && pts.every((p) => inBangkok(p[0], p[1]))
+    if (allInside) {
       const first = pts[0]
       const last = pts[pts.length - 1]
       const closed = first[0] === last[0] && first[1] === last[1] ? pts : [...pts, first]
-      scene.plot = { type: 'Polygon', coordinates: [closed] }
+      const candidate: Polygon = { type: 'Polygon', coordinates: [closed] }
+      if (validatePlot(candidate).ok) scene.plot = candidate
     }
   }
 
   const front = params.get('front')
-  if (front !== null && /^\d+$/.test(front)) scene.frontEdgeIndex = parseInt(front, 10)
+  if (scene.plot && front !== null && /^\d+$/.test(front)) {
+    const idx = parseInt(front, 10)
+    const edgeCount = scene.plot.coordinates[0].length - 1
+    if (idx < edgeCount) scene.frontEdgeIndex = idx
+  }
 
   const road = params.get('road')
   if (road !== null) {
     const w = Number(road)
-    if (Number.isFinite(w) && w > 0) scene.roadWidthM = w
+    if (Number.isFinite(w) && w > 0 && w <= 200) scene.roadWidthM = w
   }
 
   const type = params.get('type')
   if (isBuildingType(type)) scene.buildingType = type
+
+  const f2f = params.get('f2f')
+  if (f2f !== null) {
+    const v = Number(f2f)
+    if (Number.isFinite(v) && v >= FLOOR_TO_FLOOR_RANGE[0] && v <= FLOOR_TO_FLOOR_RANGE[1]) scene.floorToFloorM = v
+  }
 
   const view = params.get('view')
   if (view) {
     const parts = view.split('/').map(Number)
     if (parts.length === 5 && parts.every(Number.isFinite)) {
       const [zoom, lat, lng, pitch, bearing] = parts
-      scene.view = { zoom, lat, lng, pitch, bearing }
+      if (lat >= -85 && lat <= 85 && lng >= -180 && lng <= 180) {
+        scene.view = {
+          zoom: Math.min(24, Math.max(0, zoom)),
+          lat,
+          lng,
+          pitch: Math.min(75, Math.max(0, pitch)),
+          bearing: ((bearing % 360) + 360) % 360,
+        }
+      }
     }
   }
   return scene
@@ -91,16 +124,21 @@ export function readSceneFromLocation(): UrlScene {
 /** Loads the scene in the URL into the store. Call once before rendering. */
 export function hydrateStoreFromUrl(): void {
   const scene = readSceneFromLocation()
-  const edgeCount = scene.plot ? Math.max(0, (scene.plot.coordinates[0]?.length ?? 1) - 1) : 0
   const patch: Parameters<AppState['hydrate']>[0] = {
     plot: scene.plot,
-    frontEdgeIndex: scene.frontEdgeIndex !== null && scene.frontEdgeIndex < edgeCount ? scene.frontEdgeIndex : null,
+    frontEdgeIndex: scene.frontEdgeIndex,
     roadWidthM: scene.roadWidthM ?? DEFAULT_ROAD_WIDTH_M,
+    floorToFloorM: scene.floorToFloorM ?? DEFAULT_FLOOR_TO_FLOOR_M,
     view: scene.view,
   }
   if (scene.roadWidthM !== null) patch.roadWidthSource = { kind: 'link', detail: 'Restored from the shared link.' }
   if (scene.buildingType) patch.buildingType = scene.buildingType
   useAppStore.getState().hydrate(patch)
+}
+
+/** Removes the scene from the URL (used by the error boundary's reset). */
+export function clearSceneHash(): void {
+  history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
 }
 
 /** Keeps the location hash in sync with the store (debounced). Returns an unsubscribe. */
@@ -113,6 +151,7 @@ export function startUrlSync(debounceMs = 250): () => void {
       frontEdgeIndex: s.frontEdgeIndex,
       roadWidthM: s.roadWidthM,
       buildingType: s.buildingType,
+      floorToFloorM: s.floorToFloorM,
       view: s.view,
     })
     const next = hash ? `#${hash}` : ''
@@ -124,6 +163,7 @@ export function startUrlSync(debounceMs = 250): () => void {
       state.frontEdgeIndex === prev.frontEdgeIndex &&
       state.roadWidthM === prev.roadWidthM &&
       state.buildingType === prev.buildingType &&
+      state.floorToFloorM === prev.floorToFloorM &&
       state.view === prev.view
     )
       return

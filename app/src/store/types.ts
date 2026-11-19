@@ -26,4 +26,5 @@ export interface SceneInputs {
   frontEdgeIndex: number | null
   roadWidthM: number
   buildingType: BuildingType
+  floorToFloorM: number
 }

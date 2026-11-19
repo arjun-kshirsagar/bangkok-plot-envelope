@@ -1,11 +1,12 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
+import { ZONE_CENTER } from '../rules'
 import type { MapView } from '../store/types'
 
 /** OpenFreeMap "Liberty" style: free OSM vector tiles, no API key. */
 export const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
 
-/** Sukhumvit / Asok, Bangkok. */
-export const INITIAL_VIEW: MapView = { lng: 100.561, lat: 13.737, zoom: 16.5, pitch: 55, bearing: -20 }
+/** Sub-zone ย.10-4 (Sukhumvit Soi 31-55, north side), Bangkok. */
+export const INITIAL_VIEW: MapView = { lng: ZONE_CENTER[0], lat: ZONE_CENTER[1], zoom: 16.3, pitch: 55, bearing: -20 }
 
 /** OpenMapTiles building layer in the Liberty style. */
 export const BUILDING_3D_LAYER_ID = 'building-3d'
@@ -70,6 +71,11 @@ export function layerIdsForSourceLayers(map: MapLibreMap, sourceLayers: readonly
   return style.layers
     .filter((l) => 'source-layer' in l && typeof l['source-layer'] === 'string' && wanted.has(l['source-layer']))
     .map((l) => l.id)
+}
+
+/** Id of the first symbol (label) layer, so our geometry can sit under labels. */
+export function firstSymbolLayerId(map: MapLibreMap): string | undefined {
+  return map.getStyle().layers.find((l) => l.type === 'symbol')?.id
 }
 
 /** Ground resolution at the current view, metres per CSS pixel (512 px tiles). */

@@ -1,4 +1,5 @@
-export { MapView } from './MapView'
+export { MapView, MAP_MAX_BOUNDS } from './MapView'
 export { STYLE_URL, INITIAL_VIEW } from './mapStyle'
 export { FRONT_EDGE_COLOR } from './frontEdge'
 export { PLOT_FILL_COLOR, PLOT_OUTLINE_COLOR } from './draw'
+export { STAGE_COLORS } from './overlay'
