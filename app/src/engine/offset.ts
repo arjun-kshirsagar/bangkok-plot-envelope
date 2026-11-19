@@ -12,7 +12,7 @@
 import type { Position } from 'geojson'
 import * as pcModule from 'polygon-clipping'
 import type { MultiPolygon as PcMultiPolygon, Polygon as PcPolygon, Ring as PcRing } from 'polygon-clipping'
-import { closeRing, dropClosingPoint, ringArea } from './geometry'
+import { closeRing, dropClosingPoint, ringArea, ringPerimeter, signedRingArea } from './geometry'
 
 type PcApi = {
   difference: typeof pcModule.difference
@@ -47,16 +47,18 @@ export function multiPolygonArea(mp: MetricMultiPolygon): number {
  * vertices (which would stack several clip edges on one point and upset the
  * sweep-line). The vertex circle is circumscribed, so it still covers the gap.
  */
-export function edgeStrip(a: [number, number], b: [number, number], d: number, shorten = 0): MetricRing {
+export function edgeStrip(a: [number, number], b: [number, number], d: number, shortenA = 0, shortenB = shortenA): MetricRing {
   const dx = b[0] - a[0]
   const dy = b[1] - a[1]
   const len = Math.hypot(dx, dy)
   if (len === 0 || d <= 0) return []
-  const s = len > 4 * shorten ? shorten : 0
+  const safe = len > 4 * (Math.abs(shortenA) + Math.abs(shortenB))
+  const sA = safe ? shortenA : 0
+  const sB = safe ? shortenB : 0
   const ux = dx / len
   const uy = dy / len
-  const a2: [number, number] = [a[0] + ux * s, a[1] + uy * s]
-  const b2: [number, number] = [b[0] - ux * s, b[1] - uy * s]
+  const a2: [number, number] = [a[0] + ux * sA, a[1] + uy * sA]
+  const b2: [number, number] = [b[0] - ux * sB, b[1] - uy * sB]
   const nx = -uy * d
   const ny = ux * d
   return [
@@ -67,12 +69,14 @@ export function edgeStrip(a: [number, number], b: [number, number], d: number, s
   ]
 }
 
+const CIRCLE_SEGMENTS = 12
+
 /**
  * Polygon circumscribing the circle of radius d around c (so every point of the true
  * disk is removed; conservative), sampled with a phase offset so vertices avoid
  * axis-aligned corners.
  */
-export function circle(c: [number, number], d: number, segments = 24, phase = Math.PI / segments): MetricRing {
+export function circle(c: [number, number], d: number, segments = CIRCLE_SEGMENTS, phase = Math.PI / segments): MetricRing {
   const r = d / Math.cos(Math.PI / segments)
   const pts: MetricRing = []
   for (let i = 0; i < segments; i++) {
@@ -110,13 +114,11 @@ export interface ErodeResult {
   pieces: number
   /** Area of the pieces dropped when more than one remained. */
   droppedAreaM2: number
-  /** The part of the input the offsets removed (plot ∩ union of clips), for rendering bands. */
-  removed: MetricMultiPolygon
 }
 
 /** Keeps the largest polygon of a multipolygon. */
 export function largestPiece(mp: MetricMultiPolygon): ErodeResult {
-  if (mp.length === 0) return { polygon: null, pieces: 0, droppedAreaM2: 0, removed: [] }
+  if (mp.length === 0) return { polygon: null, pieces: 0, droppedAreaM2: 0 }
   let best = 0
   let bestArea = -1
   let total = 0
@@ -128,15 +130,14 @@ export function largestPiece(mp: MetricMultiPolygon): ErodeResult {
       best = i
     }
   })
-  if (bestArea < 1e-6) return { polygon: null, pieces: 0, droppedAreaM2: 0, removed: [] }
-  return { polygon: mp[best], pieces: mp.length, droppedAreaM2: total - bestArea, removed: [] }
+  if (bestArea < 1e-6) return { polygon: null, pieces: 0, droppedAreaM2: 0 }
+  return { polygon: mp[best], pieces: mp.length, droppedAreaM2: total - bestArea }
 }
 
 function translate(poly: MetricPolygon, dx: number, dy: number): MetricPolygon {
   return poly.map((ring) => ring.map(([x, y]) => [x + dx, y + dy] as [number, number]))
 }
 
-const CIRCLE_SEGMENTS = 24
 /** Sampling phases and strip shortenings (metres) tried in turn when polygon-clipping hits a degenerate configuration. */
 const PHASES = [Math.PI / CIRCLE_SEGMENTS, Math.PI / CIRCLE_SEGMENTS / 3, Math.PI / CIRCLE_SEGMENTS / 7, 0.011]
 const SHORTENS = [0.001, 0.0023, 0.0007, 0.0041]
@@ -151,43 +152,58 @@ const ATTEMPTS: Array<[number, number]> = SHORTENS.flatMap((sh) => PHASES.map((p
  * (radius = the larger of the two adjacent distances). Work is done about a local
  * origin to keep floating-point noise small for the boolean operations.
  */
-export function erodePolygon(poly: MetricPolygon, distances: number | number[], _capSegments = 12): ErodeResult {
-  if (poly.length === 0 || poly[0].length < 3) return { polygon: null, pieces: 0, droppedAreaM2: 0, removed: [] }
+export interface ErodeOptions {
+  /** Reserved for future tuning; erosion no longer computes render bands (see `bandPolygon`). */
+  withRemoved?: boolean
+}
+
+export function erodePolygon(poly: MetricPolygon, distances: number | number[], _options: ErodeOptions = {}): ErodeResult {
+  if (poly.length === 0 || poly[0].length < 3) return { polygon: null, pieces: 0, droppedAreaM2: 0 }
   const outer = dropClosingPoint(poly[0]) as MetricRing
   const n = outer.length
   const ds = typeof distances === 'number' ? new Array<number>(n).fill(distances) : distances
   if (ds.length !== n) throw new Error(`erodePolygon: ${ds.length} distances for ${n} edges`)
-  if (!ds.some((d) => d > 0)) return { polygon: poly, pieces: 1, droppedAreaM2: 0, removed: [] }
+  if (!ds.some((d) => d > 0)) return { polygon: poly, pieces: 1, droppedAreaM2: 0 }
 
   const ox = outer[0][0]
   const oy = outer[0][1]
   const local = translate(poly, -ox, -oy)
   const localOuter = local[0]
 
+  // A vertex needs a circle only where the two strips do not already cover the corner:
+  // reflex (inward-turning) and collinear vertices. At convex corners the strips are
+  // extended a hair past the vertex instead, which keeps their end sides from crossing
+  // exactly at the vertex.
+  const orientation = Math.sign(signedRingArea(localOuter)) || 1
+  const needsCircle: boolean[] = new Array<boolean>(n)
+  for (let i = 0; i < n; i++) {
+    const p = localOuter[(i - 1 + n) % n]
+    const v = localOuter[i]
+    const q = localOuter[(i + 1) % n]
+    const cross = (v[0] - p[0]) * (q[1] - v[1]) - (v[1] - p[1]) * (q[0] - v[0])
+    const lenA = Math.hypot(v[0] - p[0], v[1] - p[1])
+    const lenB = Math.hypot(q[0] - v[0], q[1] - v[1])
+    const sinTurn = lenA > 0 && lenB > 0 ? cross / (lenA * lenB) : 0
+    needsCircle[i] = sinTurn * orientation < 1e-3
+  }
+
   let lastError: unknown = null
   for (const [phase, shorten] of ATTEMPTS) {
     const clips: MetricPolygon[] = []
     for (let i = 0; i < n; i++) {
       const d = ds[i]
+      const j = (i + 1) % n
       if (d > 0) {
-        const strip = edgeStrip(localOuter[i], localOuter[(i + 1) % n], d, shorten)
+        const strip = edgeStrip(localOuter[i], localOuter[j], d, needsCircle[i] ? shorten : -shorten, needsCircle[j] ? shorten : -shorten)
         if (strip.length === 4) clips.push([strip])
       }
       const r = Math.max(ds[(i - 1 + n) % n], ds[i])
-      if (r > 0) clips.push([circle(localOuter[i], r, CIRCLE_SEGMENTS, phase)])
+      if (r > 0 && needsCircle[i]) clips.push([circle(localOuter[i], r, CIRCLE_SEGMENTS, phase)])
     }
     try {
       const result = pc.difference(local, ...clips)
       const best = largestPiece(result)
-      // Removed band = plot ∩ union(clips): only crossing edges, so it is robust where
-      // (plot - result) would have near-coincident boundaries.
-      let removed: MetricMultiPolygon = []
-      try {
-        removed = pc.intersection(local, pc.union(clips[0], ...clips.slice(1))).map((p) => translate(p, ox, oy))
-      } catch {
-        removed = []
-      }
-      return best.polygon ? { ...best, polygon: translate(best.polygon, ox, oy), removed } : { ...best, removed }
+      return best.polygon ? { ...best, polygon: translate(best.polygon, ox, oy) } : best
     } catch (err) {
       lastError = err
     }
@@ -195,43 +211,107 @@ export function erodePolygon(poly: MetricPolygon, distances: number | number[], 
   throw lastError instanceof Error ? lastError : new Error('erodePolygon: boolean operation failed')
 }
 
+export interface ErodeToAreaResult {
+  polygon: MetricPolygon | null
+  /** Extra uniform offset added to every base distance. */
+  offsetM: number
+  areaM2: number
+  iterations: number
+}
+
 /**
- * Finds the uniform inward offset d (by bisection) such that the eroded polygon's
- * area is `targetAreaM2` (within `toleranceM2`). Returns the polygon and d.
+ * Finds the extra uniform inward offset s such that eroding `source` by
+ * `baseDistances[i] + s` on every edge gives an area of `targetAreaM2` (within
+ * `toleranceM2`, erring on the small side). Erosion composes, so this always
+ * erodes the ORIGINAL polygon (plot-sized vertex count) instead of re-eroding an
+ * already rounded footprint. The search is bracketed from the first-order estimate
+ * s0 = (A - target) / perimeter and solved by regula falsi (Illinois), normally
+ * 3-6 erosions.
  */
 export function erodeToArea(
-  poly: MetricPolygon,
+  source: MetricPolygon,
+  baseDistances: number | number[],
   targetAreaM2: number,
-  toleranceM2 = 0.25,
-): { polygon: MetricPolygon | null; offsetM: number } {
-  const start = polygonArea(poly)
-  if (targetAreaM2 >= start) return { polygon: poly, offsetM: 0 }
-  if (targetAreaM2 <= 0) return { polygon: null, offsetM: Infinity }
-  let lo = 0
-  // A square of the same area has half-side sqrt(A)/2; eroding by that empties it. Any polygon
-  // of area A empties by at most sqrt(A) (generous upper bound).
-  let hi = Math.sqrt(start)
-  let best: MetricPolygon | null = poly
-  let bestD = 0
-  for (let i = 0; i < 40; i++) {
-    const mid = (lo + hi) / 2
-    const r = erodePolygon(poly, mid)
-    const a = r.polygon ? polygonArea(r.polygon) : 0
-    if (a > targetAreaM2) {
-      lo = mid
-      best = r.polygon
-      bestD = mid
-      if (a - targetAreaM2 <= toleranceM2) break
-    } else {
-      hi = mid
-      if (r.polygon && targetAreaM2 - a <= toleranceM2) {
-        best = r.polygon
-        bestD = mid
-        break
-      }
-    }
+  toleranceM2 = 0.5,
+  maxIterations = 15,
+): ErodeToAreaResult {
+  const n = dropClosingPoint(source[0]).length
+  const base = typeof baseDistances === 'number' ? new Array<number>(n).fill(baseDistances) : baseDistances
+  const at = (s: number): { polygon: MetricPolygon | null; area: number } => {
+    const r = erodePolygon(source, base.map((d) => d + s), { withRemoved: false })
+    return { polygon: r.polygon, area: r.polygon ? polygonArea(r.polygon) : 0 }
   }
-  return { polygon: best, offsetM: bestD }
+  let iterations = 0
+  const start = at(0)
+  iterations++
+  if (!start.polygon || targetAreaM2 >= start.area) return { polygon: start.polygon, offsetM: 0, areaM2: start.area, iterations }
+  if (targetAreaM2 <= 0) return { polygon: null, offsetM: Infinity, areaM2: 0, iterations }
+
+  const perimeter = Math.max(1e-6, ringPerimeter(start.polygon[0]))
+  const s0 = (start.area - targetAreaM2) / perimeter
+  let lo = 0
+  let fLo = start.area - targetAreaM2 // > 0
+  let hi = Math.max(1.5 * s0, 0.05)
+  let probe = at(hi)
+  iterations++
+  let fHi = probe.area - targetAreaM2
+  let doublings = 0
+  while (fHi > 0 && doublings < 8) {
+    lo = hi
+    fLo = fHi
+    hi *= 2
+    probe = at(hi)
+    iterations++
+    fHi = probe.area - targetAreaM2
+    doublings++
+  }
+  let best: { polygon: MetricPolygon | null; area: number; s: number } = { polygon: probe.polygon, area: probe.area, s: hi }
+  if (fHi > 0) return { polygon: best.polygon, offsetM: best.s, areaM2: best.area, iterations }
+  if (-fHi <= toleranceM2) return { polygon: best.polygon, offsetM: best.s, areaM2: best.area, iterations }
+
+  // Illinois regula falsi on f(s) = area(s) - target, keeping the bracket [lo, hi] with fLo > 0 > fHi.
+  let side = 0
+  for (let i = 0; i < maxIterations; i++) {
+    const s = (lo * fHi - hi * fLo) / (fHi - fLo)
+    const r = at(s)
+    iterations++
+    const f = r.area - targetAreaM2
+    if (f <= 0 && (best.area < targetAreaM2 - toleranceM2 || r.area > best.area || best.area > targetAreaM2)) {
+      best = { polygon: r.polygon, area: r.area, s }
+    }
+    if (Math.abs(f) <= toleranceM2 && f <= 0) return { polygon: r.polygon, offsetM: s, areaM2: r.area, iterations }
+    if (f > 0) {
+      lo = s
+      fLo = f
+      if (side === -1) fHi /= 2
+      side = -1
+    } else {
+      hi = s
+      fHi = f
+      if (side === 1) fLo /= 2
+      side = 1
+    }
+    if (hi - lo < 1e-4) break
+  }
+  // Fall back to the smallest-area-at-or-under-target seen, else the hi bracket end.
+  if (best.area > targetAreaM2 + toleranceM2) {
+    const r = at(hi)
+    iterations++
+    best = { polygon: r.polygon, area: r.area, s: hi }
+  }
+  return { polygon: best.polygon, offsetM: best.s, areaM2: best.area, iterations }
+}
+
+/**
+ * Render band between an outer polygon and the polygon eroded from it, as a polygon
+ * with a hole (outer ring + inner ring). No boolean operation is needed because the
+ * inner polygon is, by construction, inside the outer one. Null inner = whole outer.
+ */
+export function bandPolygon(outer: MetricPolygon | null, inner: MetricPolygon | null): MetricMultiPolygon {
+  if (!outer) return []
+  if (!inner) return [[outer[0]]]
+  if (outer[0] === inner[0]) return []
+  return [[outer[0], inner[0]]]
 }
 
 /** a minus b (both may be null), as a multipolygon for rendering bands. */

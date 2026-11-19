@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { STAGE_IDS, ruleSource, type StageId } from '../engine/pipeline'
+import { MAX_PLOT_VERTICES } from '../engine/plot'
 import { BUILDING_TYPES, ZONE_RULES, isBuildingType } from '../rules'
 import {
   FLOOR_TO_FLOOR_RANGE,
@@ -119,7 +120,10 @@ export function SidePanel() {
             {area !== null && <span className="sub">{formatThaiLandUnits(area)}</span>}
           </dd>
           <dt>Vertices</dt>
-          <dd>{edges.length || '—'}</dd>
+          <dd>
+            {edges.length || '—'}
+            {edges.length > 0 && <span className="sub-inline"> (max {MAX_PLOT_VERTICES})</span>}
+          </dd>
           <dt>Perimeter</dt>
           <dd>{formatLength(edges.length ? edges.reduce((s, e) => s + e.lengthM, 0) : null)}</dd>
           <dt>Zone</dt>

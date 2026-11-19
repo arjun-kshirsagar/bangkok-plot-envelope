@@ -52,6 +52,9 @@ describe('URL scene state', () => {
     expect(back.floorToFloorM).toBeNull()
     expect(back.view).toBeNull()
     expect(decodeScene('#design=castle&dfl=3').design).toBeNull()
+    expect(decodeScene('#road=0.0001').roadWidthM).toBeNull()
+    expect(decodeScene('#road=250').roadWidthM).toBeNull()
+    expect(decodeScene('#road=1').roadWidthM).toBe(1)
   })
 
   it('rejects plots outside Bangkok, self-intersecting plots and out-of-range front indices', () => {

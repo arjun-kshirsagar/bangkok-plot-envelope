@@ -130,16 +130,26 @@ describe('erodePolygon', () => {
 })
 
 describe('erodeToArea', () => {
-  it('finds the uniform offset that hits a target area', () => {
+  it('finds the extra uniform offset that hits a target area, in a handful of erosions', () => {
     const target = 0.7 * 1600
-    const r = erodeToArea(RECT, target)
+    const r = erodeToArea(RECT, 0, target)
     expect(r.polygon).not.toBeNull()
-    expect(polygonArea(r.polygon!)).toBeCloseTo(target, 0)
+    expect(r.areaM2).toBeLessThanOrEqual(target + 0.5)
+    expect(r.areaM2).toBeGreaterThan(target - 3)
     // 40 - 2d = sqrt(1120) -> d ~ 3.27
-    expect(r.offsetM).toBeCloseTo((40 - Math.sqrt(target)) / 2, 2)
+    expect(r.offsetM).toBeCloseTo((40 - Math.sqrt(target)) / 2, 1)
+    expect(r.iterations).toBeLessThanOrEqual(10)
+  })
+
+  it('composes with per-edge base distances (front 1.2 m, others 3 m, then shrink to 1,120 m2)', () => {
+    const r = erodeToArea(RECT, [1.2, 3, 3, 3], 1120)
+    expect(r.areaM2).toBeLessThanOrEqual(1120.5)
+    expect(r.areaM2).toBeGreaterThan(1117)
+    // (34 - 2s)(35.8 - 2s) = 1120 -> s ~ 0.71
+    expect(r.offsetM).toBeCloseTo(0.71, 1)
   })
 
   it('returns the input unchanged when it is already small enough', () => {
-    expect(erodeToArea(RECT, 2000).offsetM).toBe(0)
+    expect(erodeToArea(RECT, 0, 2000).offsetM).toBe(0)
   })
 })

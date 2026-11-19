@@ -4,7 +4,7 @@
 import type { Position } from 'geojson'
 import type { Design } from '../designs/types'
 import { bearingDeg, dropClosingPoint, pointToSegmentDistance, ringPerimeter, ringToSegmentDistance, segmentLength } from '../engine/geometry'
-import { erodePolygon, polygonArea, polygonIntersectionArea, type MetricPolygon } from '../engine/offset'
+import { polygonArea, polygonIntersectionArea, type MetricPolygon } from '../engine/offset'
 import type { PipelineInputs, PipelineResult } from '../engine/pipeline'
 import { buildingTypeRules, getRule, ruleNumber } from '../rules/loadRules'
 import type { ZoneRules } from '../rules/types'
@@ -17,14 +17,49 @@ const EPS = 1e-6
 const m = (v: number, d = 2) => `${Number(v.toFixed(d)).toLocaleString('en-GB')} m`
 const m2 = (v: number) => `${Math.round(v).toLocaleString('en-GB')} m²`
 
-/** True when `inner` (eroded by the tolerance) lies within `region`. */
+function sameRing(a: Position[], b: Position[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i][0] !== b[i][0] || a[i][1] !== b[i][1]) return false
+  return true
+}
+
+function pointInRing(p: Position, ring: Position[]): boolean {
+  const pts = dropClosingPoint(ring)
+  let inside = false
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i]
+    const [xj, yj] = pts[j]
+    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
+}
+
+function minDistanceToRing(p: Position, ring: Position[]): number {
+  const pts = dropClosingPoint(ring)
+  let best = Infinity
+  for (let i = 0; i < pts.length; i++) best = Math.min(best, pointToSegmentDistance(p, pts[i], pts[(i + 1) % pts.length]))
+  return best
+}
+
+/**
+ * True when `inner` lies within `region`, allowing a 0.05 m band of float noise:
+ * identical rings pass directly; otherwise the part of `inner` outside `region`
+ * must be smaller than perimeter x tolerance. No erosion of the (rounded) design
+ * polygon is needed, which keeps this cheap on many-vertex plots.
+ */
 export function containedWithin(inner: MetricPolygon, region: MetricPolygon | null): boolean {
   if (!region) return false
-  const shrunk = erodePolygon([inner[0]], CONTAINMENT_TOLERANCE_M).polygon
-  if (!shrunk) return true // degenerate sliver: nothing left to be outside
-  const a = polygonArea(shrunk)
-  const inside = polygonIntersectionArea(shrunk, region)
-  return inside >= a - Math.max(0.05, a * 1e-4)
+  if (sameRing(inner[0], region[0])) return true
+  const a = polygonArea([inner[0]])
+  const slack = Math.max(0.05, ringPerimeter(inner[0]) * CONTAINMENT_TOLERANCE_M)
+  try {
+    const inside = polygonIntersectionArea([inner[0]], [region[0]])
+    return inside >= a - slack
+  } catch {
+    // Degenerate boolean op: fall back to a vertex test (exact for convex regions, conservative otherwise).
+    return dropClosingPoint(inner[0]).every((p) => pointInRing(p, region[0]) || minDistanceToRing(p, region[0]) <= CONTAINMENT_TOLERANCE_M)
+  }
 }
 
 /** Shortest distance from a footprint's outer ring to a plot edge (segment). */

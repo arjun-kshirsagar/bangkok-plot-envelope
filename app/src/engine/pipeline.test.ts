@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Polygon } from 'geojson'
 import { polygonToWgs84, toMetric, type LngLat, type XY } from './projection'
-import { runPipeline, roadSetbackM, boundarySetbackM, type PipelineInputs } from './pipeline'
+import { runPipeline, roadSetbackM, boundarySetbackM, isHighRiseEnvelope, type Envelope, type PipelineInputs } from './pipeline'
 import { plotAreaM2 } from './plot'
 import { ZONE_RULES, buildingTypeRules } from '../rules'
 import { booleanWithin } from '@turf/turf'
@@ -91,10 +91,11 @@ describe('worked example from docs/RESEARCH.md (40 x 40 m, 12 m road, condo)', (
 
   it('shows the capped standard alternative: 1,120 m2, 7 floors, 21 m, 7,840 m2', () => {
     const capped = result.alternatives.find((a) => a.label.startsWith('Standard regime, kept'))!
-    expect(capped.footprintAreaM2).toBeCloseTo(1120, 0)
+    // The shrink search stops within 0.5 m2 under the 1,120 m2 target, hence the tolerances.
+    expect(Math.abs(capped.footprintAreaM2 - 1120)).toBeLessThan(0.6)
     expect(capped.maxFloors).toBe(7)
     expect(capped.heightM).toBeCloseTo(21, 6)
-    expect(capped.gfaM2).toBeCloseTo(7840, 0)
+    expect(Math.abs(capped.gfaM2 - 7840)).toBeLessThan(5)
   })
 
   it('reports the road and boundary setbacks as 6 m with MR-33 sources', () => {
@@ -154,8 +155,23 @@ describe('pipeline invariants', () => {
     })
   }
 
-  it('a sliver is consumed by the setbacks and reported, not crashed', () => {
+  it('a 9 m sliver cannot take the MR-33 band, so it falls back to a standard building under 23 m', () => {
     const r = runPipeline(inputs(SLIVER), ZONE_RULES)
+    expect(r.ok).toBe(true)
+    expect(r.regime).toBe('standard')
+    expect(r.regimeReason).toMatch(/consumes this plot/)
+    expect(r.envelope!.heightM).toBeLessThan(23)
+    expect(r.envelope!.gfaM2).toBeLessThan(10000)
+  })
+
+  it('a 4 m sliver is consumed by the standard setbacks (1.2 m + 3 m) and reported, not crashed', () => {
+    const thin = metricPlot([
+      [0, 0],
+      [60, 0],
+      [60, 4],
+      [0, 4],
+    ])
+    const r = runPipeline(inputs(thin), ZONE_RULES)
     expect(r.ok).toBe(false)
     expect(r.envelope).toBeNull()
     const env = r.stages.find((s) => s.id === 'envelope')!
@@ -223,5 +239,80 @@ describe('pipeline invariants', () => {
     expect(r.stages.find((s) => s.id === 'roadSetback')!.numbers.frontSetbackM).toBeCloseTo(3, 6)
     expect(e.maxHeightM).toBeCloseTo(18, 6)
     expect(e.maxFloors).toBe(6)
+  })
+})
+
+describe('boundary setback uses the built height', () => {
+  it('a 3-storey house on a 6 m soi is 9.0 m, so the openings rule gives 2 m (footprint 240 m2), not 3 m', () => {
+    const plot = metricPlot([
+      [0, 0],
+      [20, 0],
+      [20, 20],
+      [0, 20],
+    ])
+    const r = runPipeline(inputs(plot, { roadWidthM: 6, buildingType: 'lowRiseResidential' }), ZONE_RULES)
+    expect(r.ok).toBe(true)
+    const boundary = r.stages.find((s) => s.id === 'boundarySetback')!
+    expect(boundary.numbers.boundarySetbackM).toBe(2)
+    expect(r.stages.find((s) => s.id === 'roadSetback')!.numbers.frontSetbackM).toBeCloseTo(3, 6)
+    expect(r.envelope!.heightM).toBeCloseTo(9, 6)
+    // (20 - 2 - 2) x (20 - 3 - 2) = 16 x 15 = 240
+    expect(r.envelope!.footprintAreaM2).toBeCloseTo(240, 0)
+  })
+
+  it('a condo built to 18 m on the same soi still gets 3 m', () => {
+    const r = runPipeline(inputs(metricPlot([[0, 0], [16, 0], [16, 20], [0, 20]]), { roadWidthM: 6 }), ZONE_RULES)
+    expect(r.envelope!.heightM).toBeCloseTo(18, 6)
+    expect(r.stages.find((s) => s.id === 'boundarySetback')!.numbers.boundarySetbackM).toBe(3)
+  })
+})
+
+describe('high-rise recompute guard', () => {
+  it('isHighRiseEnvelope follows MR-33 ข้อ 1 thresholds', () => {
+    const fake = (heightM: number, gfaM2: number) => ({ heightM, gfaM2 }) as Envelope
+    expect(isHighRiseEnvelope(fake(23, 100), 23, 10000)).toBe(true)
+    expect(isHighRiseEnvelope(fake(22.9, 100), 23, 10000)).toBe(false)
+    expect(isHighRiseEnvelope(fake(10, 10000), 23, 10000)).toBe(true)
+    expect(isHighRiseEnvelope(null, 23, 10000)).toBe(false)
+  })
+
+  it('whenever the active regime is high-rise, the envelope itself is high-rise (scan of plots and roads)', () => {
+    const shapes: XY[][] = [
+      [[0, 0], [40, 0], [40, 40], [0, 40]],
+      [[0, 0], [30, 0], [30, 50], [0, 50]],
+      [[0, 0], [60, 0], [60, 30], [30, 30], [30, 60], [0, 60]],
+      [[0, 0], [25, 0], [25, 25], [0, 25]],
+    ]
+    for (const shape of shapes) {
+      for (const W of [10, 12, 16, 20, 30]) {
+        const r = runPipeline(inputs(metricPlot(shape), { roadWidthM: W }), ZONE_RULES)
+        if (r.regime === 'highRise') expect(isHighRiseEnvelope(r.envelope, 23, 10000)).toBe(true)
+      }
+    }
+  })
+})
+
+describe('performance', () => {
+  it('a 60-vertex star plot runs the full pipeline in well under a second', async () => {
+    const pts: XY[] = []
+    for (let i = 0; i < 60; i++) {
+      const ang = (2 * Math.PI * i) / 60
+      const r = i % 2 === 0 ? 60 : 44
+      pts.push([r * Math.cos(ang), r * Math.sin(ang)])
+    }
+    const star = metricPlot(pts)
+    const inp = inputs(star, { roadWidthM: 12 })
+    const { generateDesigns } = await import('../designs/templates')
+    const { evaluateChecks } = await import('../checks/evaluate')
+    // Warm up module code once, then time.
+    runPipeline(inp, ZONE_RULES)
+    const t0 = performance.now()
+    const r = runPipeline(inp, ZONE_RULES)
+    const designs = generateDesigns(r, ZONE_RULES, inp)
+    designs.forEach((d) => evaluateChecks(d, r, ZONE_RULES, inp))
+    const ms = performance.now() - t0
+    console.info(`[perf] 60-vertex star: pipeline + ${designs.length} designs + checks in ${ms.toFixed(0)} ms`)
+    expect(r.ok).toBe(true)
+    expect(ms).toBeLessThan(400)
   })
 })

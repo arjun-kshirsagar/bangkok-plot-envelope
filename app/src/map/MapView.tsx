@@ -103,6 +103,18 @@ export function MapView() {
           ],
         })
       }
+      // Coalesce overlay updates to one per animation frame while vertices are dragged.
+      let overlayFrame: number | null = null
+      const scheduleOverlay = () => {
+        if (overlayFrame !== null) return
+        overlayFrame = requestAnimationFrame(() => {
+          overlayFrame = null
+          syncOverlay(store.getState())
+        })
+      }
+      cleanups.push(() => {
+        if (overlayFrame !== null) cancelAnimationFrame(overlayFrame)
+      })
       syncFront()
       syncOverlay()
       setCursorClasses(initial.mode === 'pickFront', false)
@@ -126,7 +138,7 @@ export function MapView() {
             state.selectedDesignId !== prev.selectedDesignId ||
             state.designOverrides !== prev.designOverrides
           ) {
-            syncOverlay(state)
+            scheduleOverlay()
           }
         }),
       )

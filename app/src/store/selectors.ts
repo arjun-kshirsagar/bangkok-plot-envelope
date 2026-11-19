@@ -58,18 +58,33 @@ export function useZone(): ZoneCheck | null {
   return useMemo(() => selectZone({ plot }), [plot])
 }
 
-export function selectPipeline(state: AppState): PipelineResult {
-  if (!validatePlot(state.plot).ok) return EMPTY_PIPELINE_RESULT
-  return runPipeline(
-    {
-      plot: state.plot,
-      frontEdgeIndex: state.frontEdgeIndex,
-      roadWidthM: state.roadWidthM,
-      buildingType: state.buildingType,
-      floorToFloorM: state.floorToFloorM,
-    },
-    ZONE_RULES,
+type PipelineKey = Pick<AppState, 'plot' | 'frontEdgeIndex' | 'roadWidthM' | 'buildingType' | 'floorToFloorM'>
+
+/** One result shared by React and the map: a last-args cache keyed on the input references. */
+let pipelineCache: { key: PipelineKey; result: PipelineResult } | null = null
+
+function sameKey(a: PipelineKey, b: PipelineKey): boolean {
+  return (
+    a.plot === b.plot &&
+    a.frontEdgeIndex === b.frontEdgeIndex &&
+    a.roadWidthM === b.roadWidthM &&
+    a.buildingType === b.buildingType &&
+    a.floorToFloorM === b.floorToFloorM
   )
+}
+
+export function selectPipeline(state: PipelineKey): PipelineResult {
+  if (pipelineCache && sameKey(pipelineCache.key, state)) return pipelineCache.result
+  const key: PipelineKey = {
+    plot: state.plot,
+    frontEdgeIndex: state.frontEdgeIndex,
+    roadWidthM: state.roadWidthM,
+    buildingType: state.buildingType,
+    floorToFloorM: state.floorToFloorM,
+  }
+  const result = validatePlot(state.plot).ok ? runPipeline(key, ZONE_RULES) : EMPTY_PIPELINE_RESULT
+  pipelineCache = { key, result }
+  return result
 }
 
 export function usePipelineResult(): PipelineResult {
@@ -78,10 +93,7 @@ export function usePipelineResult(): PipelineResult {
   const roadWidthM = useAppStore((s) => s.roadWidthM)
   const buildingType = useAppStore((s) => s.buildingType)
   const floorToFloorM = useAppStore((s) => s.floorToFloorM)
-  return useMemo(() => {
-    if (!validatePlot(plot).ok) return EMPTY_PIPELINE_RESULT
-    return runPipeline({ plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM }, ZONE_RULES)
-  }, [plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM])
+  return useMemo(() => selectPipeline({ plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM }), [plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM])
 }
 
 function pipelineInputs(state: Pick<AppState, 'plot' | 'frontEdgeIndex' | 'roadWidthM' | 'buildingType' | 'floorToFloorM'>) {
@@ -99,14 +111,21 @@ export interface DesignWithChecks {
   checks: ChecklistResult
 }
 
-/** All concept designs for the current envelope, each with its checklist. */
+let designsCache: { pipeline: PipelineResult; overrides: AppState['designOverrides']; result: DesignWithChecks[] } | null = null
+
+/** All concept designs for the current envelope, each with its checklist (shared cache). */
 export function selectDesigns(state: AppState, pipeline: PipelineResult = selectPipeline(state)): DesignWithChecks[] {
-  if (!pipeline.ok) return []
-  const inputs = pipelineInputs(state)
-  return generateDesigns(pipeline, ZONE_RULES, inputs, state.designOverrides).map((design) => ({
-    design,
-    checks: evaluateChecks(design, pipeline, ZONE_RULES, inputs),
-  }))
+  if (designsCache && designsCache.pipeline === pipeline && designsCache.overrides === state.designOverrides) return designsCache.result
+  let result: DesignWithChecks[] = []
+  if (pipeline.ok) {
+    const inputs = pipelineInputs(state)
+    result = generateDesigns(pipeline, ZONE_RULES, inputs, state.designOverrides).map((design) => ({
+      design,
+      checks: evaluateChecks(design, pipeline, ZONE_RULES, inputs),
+    }))
+  }
+  designsCache = { pipeline, overrides: state.designOverrides, result }
+  return result
 }
 
 export function selectSelectedDesign(state: AppState, pipeline?: PipelineResult): DesignWithChecks | null {
@@ -122,12 +141,8 @@ export function useDesigns(): DesignWithChecks[] {
   const buildingType = useAppStore((s) => s.buildingType)
   const floorToFloorM = useAppStore((s) => s.floorToFloorM)
   const designOverrides = useAppStore((s) => s.designOverrides)
-  return useMemo(() => {
-    if (!pipeline.ok) return []
-    const inputs = { plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM }
-    return generateDesigns(pipeline, ZONE_RULES, inputs, designOverrides).map((design) => ({
-      design,
-      checks: evaluateChecks(design, pipeline, ZONE_RULES, inputs),
-    }))
-  }, [pipeline, plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM, designOverrides])
+  return useMemo(
+    () => selectDesigns({ plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM, designOverrides } as AppState, pipeline),
+    [pipeline, plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM, designOverrides],
+  )
 }

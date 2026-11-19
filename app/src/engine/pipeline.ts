@@ -7,11 +7,12 @@ import type { MultiPolygon, Polygon, Position } from 'geojson'
 import { ringToMetric, toWgs84 } from './projection'
 import { outerRing } from './plot'
 import {
+  bandPolygon,
   closePolygon,
   erodePolygon,
   erodeToArea,
   polygonArea,
-  polygonDifference,
+  type ErodeResult,
   type MetricMultiPolygon,
   type MetricPolygon,
   toMetricRing,
@@ -99,6 +100,8 @@ export interface PipelineMetric {
   afterBoundarySetback: MetricPolygon | null
   /** Final envelope footprint after the open-space shrink (null if consumed). */
   footprint: MetricPolygon | null
+  /** Per-edge inward distances (front/boundary setback + open-space shrink) that erode `plot` into `footprint`. */
+  footprintOffsets: number[]
 }
 
 export interface PipelineResult {
@@ -139,6 +142,8 @@ interface Ctx {
   frontEdgeIndex: number
   roadWidthM: number
   floorToFloorM: number
+  /** Per-run cache: the three regime computations share most erosions. */
+  erode: (distances: number[]) => ErodeResult
 }
 
 interface Caps {
@@ -272,7 +277,15 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
   }
   heightNotes.push('Two-road / corner relief (MR-55 ข้อ 45-46) is not applied: the height is taken from the selected front road only.')
 
-  // --- Boundary setback (standard regime depends on the building height it allows).
+  // --- Floors by height (depends only on the front setback), so the boundary setback can use the BUILT height.
+  let floorsByHeight = Math.floor(hMax / f2f + EPS)
+  if (typeRules.maxStoreys !== undefined) floorsByHeight = Math.min(floorsByHeight, typeRules.maxStoreys)
+  if (caps.heightBelowM !== undefined) floorsByHeight = Math.min(floorsByHeight, Math.ceil(caps.heightBelowM / f2f - EPS) - 1)
+  floorsByHeight = Math.max(0, floorsByHeight)
+  const builtHeightM = floorsByHeight * f2f
+
+  // --- Boundary setback (standard regime depends on the height actually built; if FAR later
+  //     lowers the floor count the height-based value is kept, which is conservative).
   let sBoundary: number
   let boundaryNote: string
   let boundarySources: string[]
@@ -281,19 +294,19 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
     boundaryNote = `High-rise / extra-large building: >= ${hr.boundaryM} m from every neighbouring boundary, above and below ground (MR-33 ข้อ 4); also the 6 m fire-engine road around the building (MR-33 ข้อ 3).`
     boundarySources = ['mr33-clearance', 'mr33-fire-road']
   } else {
-    const designHeight = caps.heightBelowM !== undefined ? Math.min(hMax, caps.heightBelowM - EPS) : hMax
-    const b = boundarySetbackM(rules, typeRules, designHeight)
+    const b = boundarySetbackM(rules, typeRules, builtHeightM)
     sBoundary = b.m
-    boundaryNote = `Standard regime, ${b.note}.`
+    boundaryNote = `Standard regime, ${b.note} (built height ${floorsByHeight} x ${fmt(f2f, 2)} m = ${fmt(builtHeightM)} m).`
     boundarySources = ['mr55-boundary-openings', 'bma-perimeter-open']
   }
 
-  // --- Geometry: erode the plot by the per-edge distances.
-  const afterRoad = erodePolygon(ctx.plotMetric, perEdge(ctx, sFront, 0))
-  const afterBoundary = erodePolygon(ctx.plotMetric, perEdge(ctx, sFront, sBoundary))
-  // Bands for rendering: the road strip is drawn over the full setback band.
-  const roadStrip = afterRoad.removed
-  const boundaryBand = afterBoundary.removed
+  // --- Geometry: erode the plot by the per-edge distances (cached per run).
+  const baseOffsets = perEdge(ctx, sFront, sBoundary)
+  const afterRoad = ctx.erode(perEdge(ctx, sFront, 0))
+  const afterBoundary = ctx.erode(baseOffsets)
+  // Bands for rendering (outer ring + hole, no boolean work): the road strip is drawn over the full setback band.
+  const roadStrip = bandPolygon(ctx.plotMetric, afterRoad.polygon)
+  const boundaryBand = bandPolygon(ctx.plotMetric, afterBoundary.polygon)
 
   stages.push({
     id: 'roadSetback',
@@ -318,10 +331,6 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
   })
 
   // --- Height / floors.
-  let floorsByHeight = Math.floor(hMax / f2f + EPS)
-  if (typeRules.maxStoreys !== undefined) floorsByHeight = Math.min(floorsByHeight, typeRules.maxStoreys)
-  if (caps.heightBelowM !== undefined) floorsByHeight = Math.min(floorsByHeight, Math.ceil(caps.heightBelowM / f2f - EPS) - 1)
-  floorsByHeight = Math.max(0, floorsByHeight)
   heightNotes.push(`Floors by height = floor(${fmt(hMax)} / ${fmt(f2f, 2)}) = ${floorsByHeight}${typeRules.maxStoreys !== undefined ? `, capped at ${typeRules.maxStoreys} storeys for this type` : ''}. Height is measured to the roof-deck floor; parapets and roof plant are ignored.`)
   stages.push({
     id: 'height',
@@ -361,20 +370,34 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
     if (caps.gfaBelowM2 !== undefined) k = Math.min(k, Math.ceil(caps.gfaBelowM2 / F - EPS) - 1)
     return Math.max(0, Math.min(floorsByHeight, k))
   }
-  let targetF = Math.min(setbackArea, A - requiredByPlot)
-  if (footprint && setbackArea > targetF + 0.5) footprintLimitedBy = 'openSpacePlot'
+  const limitByPlot = A - requiredByPlot
   // OSR: A - F >= osr x k(F) x F  ->  F <= A / (1 + osr x k). k is non-increasing in F, so iterate.
-  if (footprint && targetF > 0) {
-    for (let i = 0; i < 10; i++) {
-      const k = floorsFor(targetF)
+  let limitByOsr = Infinity
+  if (footprint) {
+    let f = Math.min(setbackArea, limitByPlot)
+    for (let i = 0; i < 10 && f > 0; i++) {
+      const k = floorsFor(f)
       const fOsr = A / (1 + osrFrac * k)
-      if (targetF <= fOsr + 1e-6) break
-      targetF = fOsr
-      footprintLimitedBy = 'osr'
+      if (f <= fOsr + 1e-6) break
+      f = fOsr
+      limitByOsr = fOsr
+    }
+  }
+  // Pick the tightest limit explicitly (ties go to the earlier, more fundamental one).
+  const candidates: Array<[FootprintLimit, number]> = [
+    ['setbacks', setbackArea],
+    ['openSpacePlot', limitByPlot],
+    ['osr', limitByOsr],
+  ]
+  let targetF = setbackArea
+  for (const [kind, value] of candidates) {
+    if (value < targetF - 1e-9) {
+      targetF = value
+      footprintLimitedBy = kind
     }
   }
   if (footprint && setbackArea > targetF + 0.5) {
-    const shrunk = erodeToArea(footprint, targetF)
+    const shrunk = erodeToArea(ctx.plotMetric, baseOffsets, targetF)
     footprint = shrunk.polygon
     shrinkM = shrunk.offsetM
     openNotes.push(
@@ -384,7 +407,7 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
     openNotes.push(`Setback footprint ${fmt(setbackArea, 0)} m2 already leaves ${fmt(A - setbackArea, 0)} m2 open (${fmt((100 * (A - setbackArea)) / A, 0)}% of the plot); no further shrink.`)
   }
   openNotes.push(`At least ${rules.zone.permeablePercentOfOpenSpace}% of the open space must be permeable planting ground.`)
-  const shrinkBand = shrinkM > 0 ? polygonDifference(afterBoundary.polygon, footprint) : []
+  const shrinkBand = shrinkM > 0 ? bandPolygon(afterBoundary.polygon, footprint) : []
   const F = footprint ? polygonArea(footprint) : 0
   stages.push({
     id: 'openSpace',
@@ -404,6 +427,7 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
     afterRoadSetback: afterRoad.polygon,
     afterBoundarySetback: afterBoundary.polygon,
     footprint: footprint && F >= 1 ? footprint : null,
+    footprintOffsets: baseOffsets.map((d) => d + shrinkM),
   }
 
   // --- Envelope.
@@ -532,6 +556,18 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
     frontEdgeIndex,
     roadWidthM: inputs.roadWidthM,
     floorToFloorM: inputs.floorToFloorM,
+    erode: (() => {
+      const cache = new Map<string, ErodeResult>()
+      return (distances: number[]) => {
+        const key = distances.map((d) => d.toFixed(4)).join(',')
+        let r = cache.get(key)
+        if (!r) {
+          r = erodePolygon(plotMetric, distances)
+          cache.set(key, r)
+        }
+        return r
+      }
+    })(),
   }
 
   const hrHeight = rules.thresholds.highRiseHeightM
@@ -598,6 +634,24 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
     } catch (err) {
       return geometryFailure(plot, A, err)
     }
+    // Guard: the recomputed high-rise envelope must itself still be high-rise; otherwise the
+    // (larger-footprint) capped standard envelope is the right answer.
+    if (!isHighRiseEnvelope(highRise.envelope, hrHeight, hrGfa)) {
+      const reason = highRise.envelope
+        ? `Standard setbacks would reach ${why}, but with the 6 m MR-33 clearance the building drops back under both thresholds, so the standard regime held under ${hrHeight} m and ${fmt(hrGfa, 0)} m2 governs.`
+        : `Standard setbacks would reach ${why}, but the 6 m MR-33 clearance consumes this plot, so the only buildable option is to stay under ${hrHeight} m and ${fmt(hrGfa, 0)} m2 in the standard regime.`
+      return {
+        ok: capped.envelope !== null,
+        stages: capped.stages,
+        envelope: capped.envelope,
+        metric: capped.metric,
+        regime: 'standard',
+        regimeReason: reason,
+        alternatives: [summary(highRise, 'High-rise setbacks (not needed)', 'MR-33 setbacks would leave a building under the thresholds; shown for comparison.')],
+        warnings,
+        annotations: [reason],
+      }
+    }
     const reason = `Standard-regime envelope reaches ${why}, so the building is อาคารสูง / อาคารขนาดใหญ่พิเศษ and MR-33 applies (6 m clearance all round, road right-of-way >= ${rowSmall} m with 12 m frontage, fire road). Recomputed in the high-rise regime.`
     const hrWarnings = [...warnings]
     if (hrCaps.gfaCapNote && highRise.envelope && highRise.envelope.floorsByFar < highRise.envelope.floorsByHeight && highRise.envelope.gfaM2 >= tierGfa - highRise.envelope.footprintAreaM2) {
@@ -633,6 +687,12 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
     warnings,
     annotations: [reason],
   }
+}
+
+/** MR-33 ข้อ 1 test on an envelope: height >= 23 m or GFA >= 10,000 m2. */
+export function isHighRiseEnvelope(env: Envelope | null, heightThresholdM: number, gfaThresholdM2: number): boolean {
+  if (!env) return false
+  return env.heightM >= heightThresholdM - EPS || env.gfaM2 >= gfaThresholdM2 - EPS
 }
 
 /** A boolean-geometry failure must never take the app down: report it as a warning. */

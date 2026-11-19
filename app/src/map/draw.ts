@@ -12,6 +12,7 @@ import {
 } from 'terra-draw'
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter'
 import type { InteractionMode } from '../store/types'
+import { MAX_PLOT_VERTICES } from '../engine/plot'
 
 export const PLOT_FILL_COLOR = '#2dd4bf'
 export const PLOT_OUTLINE_COLOR = '#0d9488'
@@ -38,7 +39,13 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
     adapter: new TerraDrawMapLibreGLAdapter({ map, coordinatePrecision: 9 }),
     modes: [
       new TerraDrawPolygonMode({
-        validation: (feature) => ValidateNotSelfIntersecting(feature),
+        // While drawing, the ring carries the provisional cursor vertex as well, hence +1.
+        validation: (feature) => {
+          const v = ValidateNotSelfIntersecting(feature)
+          if (!v.valid) return v
+          const n = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0].length - 1 : 0
+          return n <= MAX_PLOT_VERTICES + 1 ? { valid: true } : { valid: false, reason: `Maximum ${MAX_PLOT_VERTICES} vertices` }
+        },
         styles: {
           fillColor: PLOT_FILL_COLOR,
           fillOpacity: 0.28,
@@ -54,6 +61,12 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
         flags: {
           polygon: {
             feature: {
+              validation: (feature) => {
+                const v = ValidateNotSelfIntersecting(feature)
+                if (!v.valid) return v
+                const n = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0].length - 1 : 0
+                return n <= MAX_PLOT_VERTICES ? { valid: true } : { valid: false, reason: `Maximum ${MAX_PLOT_VERTICES} vertices` }
+              },
               draggable: false,
               rotateable: false,
               scaleable: false,

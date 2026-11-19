@@ -96,7 +96,7 @@ export function decodeScene(hash: string): UrlScene {
   const road = params.get('road')
   if (road !== null) {
     const w = Number(road)
-    if (Number.isFinite(w) && w > 0 && w <= 200) scene.roadWidthM = w
+    if (Number.isFinite(w) && w >= 1 && w <= 200) scene.roadWidthM = w
   }
 
   const type = params.get('type')

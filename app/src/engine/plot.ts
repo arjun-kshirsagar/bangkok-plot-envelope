@@ -115,12 +115,16 @@ export function remapFrontEdge(prevPlot: Polygon | null, prevIndex: number | nul
   return best
 }
 
+/** Upper bound on plot vertices; keeps the setback geometry interactive. */
+export const MAX_PLOT_VERTICES = 60
+
 export type PlotValidation = { ok: true } | { ok: false; reason: string }
 
 export function validatePlot(plot: Polygon | null): PlotValidation {
   if (!plot) return { ok: false, reason: 'No plot drawn yet.' }
   const ring = outerRing(plot)
   if (ring.length < 3) return { ok: false, reason: 'A plot needs at least three vertices.' }
+  if (ring.length > MAX_PLOT_VERTICES) return { ok: false, reason: `Plot has ${ring.length} vertices; the maximum is ${MAX_PLOT_VERTICES}. Remove vertices (right-click) to continue.` }
   if (plotAreaM2(plot) < 1) return { ok: false, reason: 'Plot area is zero.' }
   const selfIntersections = kinks({ type: 'Polygon', coordinates: [[...ring, ring[0]]] })
   if (selfIntersections.features.length > 0) {
