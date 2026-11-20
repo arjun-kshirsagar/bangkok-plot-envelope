@@ -117,31 +117,50 @@ describe('courtyard template', () => {
   })
 })
 
-describe('frontage check', () => {
-  it('a footprint deep in the plot passes by the ข้อ 52(6) front open space only when the road frontage is wide enough', () => {
-    // 40 x 80 m plot, 12 m road on the short south edge: the slab shifted 30 m back is not fronting,
-    // but keeps > 12 m of open space along a 40 m frontage (>= 1/6 of its perimeter).
-    const deep = metricPlot([[0, 0], [40, 0], [40, 80], [0, 80]])
-    const inp = inputs(deep)
+describe('frontage check (ข้อ 53 fronting, else ข้อ 52(6) front open space)', () => {
+  const [x0, y0] = toMetric(ORIGIN)
+  const rectAt = (x1: number, y1: number, x2: number, y2: number) => [[[x0 + x1, y0 + y1], [x0 + x2, y0 + y1], [x0 + x2, y0 + y2], [x0 + x1, y0 + y2]] as [number, number][]]
+
+  it('a building 25 m back on a straight-fronted plot passes by a 12 m front open space band reaching the road', () => {
+    const inp = inputs(metricPlot([[0, 0], [40, 0], [40, 80], [0, 80]]))
     const { pipeline, designs } = run(inp)
     const slab = designs.find((d) => d.id === 'slab')!
-    const ok = evaluateChecks(slab, pipeline, ZONE_RULES, inp).rows.find((r) => r.ruleId === 'bma-frontage')!
-    expect(ok.pass).toBe(true)
-    const shifted = { ...slab, floors: 12, heightM: 36, footprint: [slab.footprint[0].map(([x, y]) => [x, y + 30] as [number, number])] }
-    const viaOpen = evaluateChecks(shifted, pipeline, ZONE_RULES, inp).rows.find((r) => r.ruleId === 'bma-frontage')!
-    expect(viaOpen.pass).toBe(true)
-    expect(viaOpen.note).toMatch(/52\(6\)/)
+    const block = { ...slab, floors: 12, heightM: 36, footprint: rectAt(6, 25, 34, 60) }
+    const row = evaluateChecks(block, pipeline, ZONE_RULES, inp).rows.find((r) => r.ruleId === 'bma-frontage')!
+    expect(row.pass).toBe(true)
+    expect(row.note).toMatch(/Does not front the road/)
+    expect(row.note).toMatch(/Uses the ข้อ 52\(6\) front open space: 12 m band, 28 m along the building \(needs >= 21 m\), connected by a straight open path at least 6 m wide/)
+  })
 
-    // 15 x 80 m plot on the short edge: a 9 x 40 m block 25 m back neither fronts (> 20 m) nor has
-    // a frontage of 1/6 of its 98 m perimeter (15 m < 16.3 m).
-    const narrow = metricPlot([[0, 0], [15, 0], [15, 80], [0, 80]])
-    const inp2 = inputs(narrow)
-    const p2 = runPipeline(inp2, ZONE_RULES)
-    const [x0, y0] = toMetric(ORIGIN)
-    const block = { ...slab, floors: 12, heightM: 36, footprint: [[[x0 + 3, y0 + 25], [x0 + 12, y0 + 25], [x0 + 12, y0 + 65], [x0 + 3, y0 + 65]] as [number, number][]] }
-    const bad = evaluateChecks(block, p2, ZONE_RULES, inp2).rows.find((r) => r.ruleId === 'bma-frontage')!
-    expect(bad.pass).toBe(false)
-    expect(bad.note).toMatch(/Neither/)
+  it('fails when the band along the building is shorter than 1/6 of its perimeter, with the numbers', () => {
+    const inp = inputs(metricPlot([[0, 0], [15, 0], [15, 80], [0, 80]]))
+    const { pipeline } = run(inp)
+    const block = { ...run(inputs(metricPlot([[0, 0], [40, 0], [40, 80], [0, 80]]))).designs[0], floors: 12, heightM: 36, footprint: rectAt(3, 25, 12, 65) }
+    const row = evaluateChecks(block, pipeline, ZONE_RULES, inp).rows.find((r) => r.ruleId === 'bma-frontage')!
+    expect(row.pass).toBe(false)
+    expect(row.note).toMatch(/No ข้อ 52\(6\) front open space either: 12 m band 9 m long \(needs >= 16.3 m\)/)
+  })
+
+  it('a flag lot (12 m x 20 m pole, 40 x 50 m body, 20 m road) keeps the full height via the front open space and the pole', () => {
+    const flag = metricPlot([[0, 0], [12, 0], [12, 20], [26, 20], [26, 70], [-14, 70], [-14, 20], [0, 20]])
+    const inp = inputs(flag, { roadWidthM: 20 })
+    const { pipeline, designs, checks } = run(inp)
+    expect(Math.round(pipeline.metric!.plotAreaM2)).toBe(2240)
+    const env = pipeline.envelope!
+    const slab = designs.find((d) => d.id === 'slab')!
+    expect(slab.floors).toBe(env.maxFloors)
+    expect(slab.floors).toBeGreaterThan(3)
+    expect(slab.notes.join(' ')).toMatch(/Uses the ข้อ 52\(6\) front open space/)
+    expect(slab.notes.join(' ')).toMatch(/connected (by a straight open path|through an open corridor) at least 6 m wide/)
+    checks.forEach((c, i) => expect(c.pass, designs[i].id).toBe(true))
+  })
+
+  it('a 15 x 80 m lot on its short edge either goes above 3 storeys or says why with numbers', () => {
+    const inp = inputs(metricPlot([[0, 0], [15, 0], [15, 80], [0, 80]]))
+    const { designs } = run(inp)
+    for (const d of designs) {
+      if (d.floors <= 3 && d.floorsCap !== undefined) expect(d.notes.join(' ')).toMatch(/needs >= \d/)
+    }
   })
 })
 

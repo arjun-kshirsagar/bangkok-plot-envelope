@@ -47,7 +47,7 @@ function cachedEroder(source: MetricPolygon, offsets: number[], clip?: DepthClip
     const key = extraM.toFixed(4)
     if (!cache.has(key)) {
       const e = erodeFrom(source, offsets, extraM)
-      cache.set(key, e && clip ? clipToDepth(e, clip, clip.depthM - extraM) : e)
+      cache.set(key, e && clip ? clipToDepth(e, clip, clip.nearM + extraM, clip.depthM - extraM) : e)
     }
     return cache.get(key) ?? null
   }
@@ -61,10 +61,12 @@ interface DepthClip {
   n: [number, number]
   /** Half-length of the clip strip along the front line (covers the whole plot). */
   halfLen: number
+  /** Keep the part between these depths from the front line (near: the building pushed back; far: cut back from the rear). */
+  nearM: number
   depthM: number
 }
 
-function makeDepthClip(plot: MetricPolygon, frontIdx: number, depthM: number): DepthClip | null {
+function makeDepthClip(plot: MetricPolygon, frontIdx: number, depthM: number, nearM = -Infinity): DepthClip | null {
   const ring = dropClosingPoint(plot[0])
   const k = ring.length
   const a = ring[frontIdx]
@@ -80,7 +82,8 @@ function makeDepthClip(plot: MetricPolygon, frontIdx: number, depthM: number): D
     cy += p[1] / k
   }
   if ((cx - a[0]) * n[0] + (cy - a[1]) * n[1] < 0) n = [-n[0], -n[1]]
-  return { a: [a[0], a[1]], u, n, halfLen: ringPerimeter(ring), depthM }
+  const L = ringPerimeter(ring)
+  return { a: [a[0], a[1]], u, n, halfLen: L, nearM: Math.max(nearM, -L), depthM: Math.min(depthM, L) }
 }
 
 /**
@@ -88,13 +91,13 @@ function makeDepthClip(plot: MetricPolygon, frontIdx: number, depthM: number): D
  * eroded ORIGINAL plot (rather than eroding a cut plot) keeps every original edge's full
  * setback, including near where the cut line meets an oblique boundary.
  */
-function clipToDepth(poly: MetricPolygon, c: DepthClip, depthM: number): MetricPolygon | null {
-  if (depthM <= 0) return null
+function clipToDepth(poly: MetricPolygon, c: DepthClip, nearM: number, depthM: number): MetricPolygon | null {
+  if (depthM <= 0 || depthM <= nearM) return null
   const { a, u, n, halfLen: L } = c
   const strip: MetricPolygon = [
     [
-      [a[0] - u[0] * L - n[0] * L, a[1] - u[1] * L - n[1] * L],
-      [a[0] + u[0] * L - n[0] * L, a[1] + u[1] * L - n[1] * L],
+      [a[0] - u[0] * L + n[0] * nearM, a[1] - u[1] * L + n[1] * nearM],
+      [a[0] + u[0] * L + n[0] * nearM, a[1] + u[1] * L + n[1] * nearM],
       [a[0] + u[0] * L + n[0] * depthM, a[1] + u[1] * L + n[1] * depthM],
       [a[0] - u[0] * L + n[0] * depthM, a[1] - u[1] * L + n[1] * depthM],
     ],
@@ -194,7 +197,8 @@ export function slabTemplate(ctx: TemplateContext): Design | null {
   if (ctx.maxFloors < 1) return null
   const floors = ctx.overrides.floors ?? ctx.maxFloors
   const b = block('slab', 'Slab', ctx.base, 0, floors, ctx.f2f)
-  const notes = [`Footprint ${ctx.frontageNote ? 'follows the frontage rule (see below)' : 'equals the envelope footprint'} (${fmt(b.areaM2)} m2), ${floors} floors x ${ctx.f2f} m.`]
+  const reshaped = ctx.frontageNote !== null && !ctx.frontageNote.startsWith('Capped')
+  const notes = [`Footprint ${reshaped ? 'is the envelope footprint reshaped for the frontage rule (see below)' : 'equals the envelope footprint'} (${fmt(b.areaM2)} m2), ${floors} floors x ${ctx.f2f} m.`]
   const limitedBy: DesignLimit = ctx.overrides.floors !== undefined ? 'override' : ctx.pipeline.envelope?.bindingRule === 'far' ? 'far' : 'height'
   if (limitedBy === 'override') notes.push(`Floors overridden by user (template default ${ctx.maxFloors}).`)
   return finish('slab', 'Full-envelope slab', 'The envelope built out as one block: maximum footprint, maximum floors.', ctx, [b], ctx.base, notes, limitedBy, ctx.maxFloors)
@@ -431,6 +435,13 @@ interface DesignPlot {
  *    needed so the front edge reaches 1/6 of the perimeter;
  *  - otherwise the designs are capped at the residential exemption (3 storeys).
  */
+/**
+ * Search parameters of the frontage options (engineering choices, not rule values): a footprint
+ * under 50 m2 is not a building option; depth searches start 4 m inside the footprint and stop
+ * at 0.5 m resolution (8 bisection steps).
+ */
+const FRONTAGE_SEARCH = { minAreaM2: 50, startInsetM: 4, resolutionM: 0.5, steps: 8 } as const
+
 function designPlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | null {
   const metric = pipeline.metric
   const env = pipeline.envelope
@@ -443,8 +454,9 @@ function designPlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | nu
   const ring = dropClosingPoint(metric.plot[0])
   const fi = metric.frontEdgeIndex
   const front: [Position, Position] = [ring[fi], ring[(fi + 1) % ring.length]]
-  const verdict = (poly: MetricPolygon) => frontageVerdict(poly[0], front, floors, fp)
-  if (verdict(plain.base).pass) return plain
+  const verdict = (poly: MetricPolygon) => frontageVerdict(poly[0], metric.plot[0], front, floors, fp)
+  const plainVerdict = verdict(plain.base)
+  if (plainVerdict.pass) return plain
 
   // Depths of the envelope footprint from the front-edge line.
   const [a, b] = front
@@ -461,43 +473,57 @@ function designPlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | nu
   const dMin = Math.min(...depths)
   const dMax = Math.max(...depths)
   const needDepth = floors > fp.tierStoreys ? fp.frontOpenTallM : fp.frontOpenM
-  const MIN_AREA = 50
+  const { minAreaM2, startInsetM, resolutionM, steps } = FRONTAGE_SEARCH
 
-  const attempt = (D: number, route: 'fronting' | 'open'): DesignPlot | null => {
-    const offsets = [...metric.footprintOffsets]
-    if (route === 'open') offsets[fi] = Math.max(offsets[fi], needDepth + 0.01)
-    const clip = D >= dMax ? undefined : (makeDepthClip(metric.plot, fi, D) ?? undefined)
+  /** Envelope footprint kept between depths `near` and `far` from the front line. */
+  const attempt = (near: number, far: number, route: 'fronting' | 'open'): { dp: DesignPlot; v: ReturnType<typeof verdict> } | null => {
+    const clip = near <= dMin && far >= dMax ? undefined : (makeDepthClip(metric.plot, fi, far, near) ?? undefined)
     let base: MetricPolygon | null
     try {
-      base = erodeFrom(metric.plot, offsets, 0)
-      if (base && clip) base = clipToDepth(base, clip, D)
+      base = erodeFrom(metric.plot, metric.footprintOffsets, 0)
+      if (base && clip) base = clipToDepth(base, clip, clip.nearM, clip.depthM)
     } catch {
       return null
     }
-    if (!base || polygonArea(base) < MIN_AREA) return null
+    if (!base || polygonArea(base) < minAreaM2) return null
     const v = verdict(base)
-    if (route === 'fronting' ? !v.fronting : !v.openSpaceRoute) return null
-    return { plot: metric.plot, offsets, base: [base[0]], note: null, clip }
+    if (route === 'fronting' ? !v.fronting : !v.open?.pass) return null
+    return { dp: { plot: metric.plot, offsets: metric.footprintOffsets, base: [base[0]], note: null, clip }, v }
   }
-  const search = (route: 'fronting' | 'open'): { dp: DesignPlot; D: number } | null => {
-    const full = attempt(dMax + 1, route)
-    if (full) return { dp: full, D: dMax }
-    let lo = Math.max(dMin, route === 'open' ? needDepth : 0) + 4
-    let best = attempt(lo, route)
+  // ข้อ 53: largest rear depth that still fronts the way.
+  const searchFronting = () => {
+    let lo = dMin + startInsetM
+    let best = attempt(-Infinity, lo, 'fronting')
     if (!best) return null
     let hi = dMax
-    for (let i = 0; i < 8 && hi - lo > 0.5; i++) {
+    for (let i = 0; i < steps && hi - lo > resolutionM; i++) {
       const mid = (lo + hi) / 2
-      const r = attempt(mid, route)
+      const r = attempt(-Infinity, mid, 'fronting')
       if (r) {
         lo = mid
         best = r
       } else hi = mid
     }
-    return { dp: best, D: lo }
+    return { ...best, D: lo }
   }
-  const byFronting = search('fronting')
-  const byOpen = search('open')
+  // ข้อ 52(6): smallest push-back of the building (near depth) that leaves the front open space.
+  const searchOpen = () => {
+    let hi = dMax - startInsetM
+    let best = attempt(hi, Infinity, 'open')
+    if (!best) return null
+    let lo = dMin
+    for (let i = 0; i < steps && hi - lo > resolutionM; i++) {
+      const mid = (lo + hi) / 2
+      const r = attempt(mid, Infinity, 'open')
+      if (r) {
+        hi = mid
+        best = r
+      } else lo = mid
+    }
+    return { ...best, D: hi }
+  }
+  const byFronting = searchFronting()
+  const byOpen = searchOpen()
   // Compare by the GFA each option can carry (footprint x floors within the height and GFA caps),
   // including the 3-storey exempt building on the full envelope footprint.
   const gfaOf = (areaM2: number, floorsMax: number) => areaM2 * Math.max(0, Math.min(floorsMax, Math.floor(env.gfaCapM2 / Math.max(areaM2, 1e-9) + 1e-9)))
@@ -505,18 +531,27 @@ function designPlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | nu
   const gOpen = byOpen ? gfaOf(polygonArea(byOpen.dp.base), env.floorsByHeight) : 0
   const gCapped = gfaOf(polygonArea(plain.base), Math.min(env.floorsByHeight, fp.exemptStoreys))
   const best = Math.max(gFront, gOpen, gCapped)
+  const m1 = (v: number) => `${fmt(v, 1)} m`
+  const pf = plainVerdict.fr
+  const notFronting = `The envelope footprint does not front the road: road-side building line ${m1(pf.lineM)}, needs > ${m1(fp.minFraction * pf.perimeterM)} (1/${Math.round(1 / fp.minFraction)} of ${fmt(pf.perimeterM)} m perimeter) within ${fp.maxDistM} m.`
   if (byFronting && gFront === best && gFront > 0) {
-    byFronting.dp.note = `Cut back to ${fmt(byFronting.D, 1)} m from the road so the road-facing building line exceeds 1/${Math.round(1 / fp.minFraction)} of the perimeter (BMA-BL-2544 ข้อ 53); the full-depth envelope would not front the public way.`
+    byFronting.dp.note = `${notFronting} Cut back to ${m1(byFronting.D)} from the road so it fronts the public way (ข้อ 53): line ${m1(byFronting.v.fr.lineM)} of ${fmt(byFronting.v.fr.perimeterM)} m perimeter.`
     return byFronting.dp
   }
-  if (byOpen && gOpen === best && gOpen > 0) {
-    byOpen.dp.note = `Building line held ${needDepth} m back from the road as the ข้อ 52(6) front open space${byOpen.D < dMax ? `, and the block cut back to ${fmt(byOpen.D, 1)} m deep so the road frontage covers 1/${Math.round(1 / fp.openFraction)} of its perimeter` : ''}; the envelope footprint would not front the public way (ข้อ 53).`
+  if (byOpen && gOpen === best && gOpen > 0 && byOpen.v.open) {
+    const o = byOpen.v.open
+    byOpen.dp.note = `${notFronting} Uses the ข้อ 52(6) front open space: building pushed back to ${m1(byOpen.D)} from the road edge line, ${needDepth} m band ${m1(o.bandM)} along the building (needs >= ${m1(o.needBandM)}), connected ${o.connection}.`
     return byOpen.dp
   }
+  const po = plainVerdict.open
   return {
     ...plain,
     floorsCap: fp.exemptStoreys,
-    note: `Capped at ${fp.exemptStoreys} storeys (residential buildings of <= ${fp.exemptStoreys} storeys are exempt from ข้อ 52(6) / 53): ${byFronting || byOpen ? 'this carries more floor area than the largest taller footprint that fronts the public way or keeps' : 'no taller footprint on this plot fronts the public way or keeps'} the ${needDepth} m front open space over 1/${Math.round(1 / fp.openFraction)} of its perimeter.`,
+    note: `Capped at ${fp.exemptStoreys} storeys (residential buildings of <= ${fp.exemptStoreys} storeys are exempt from ข้อ 52(6) / 53). ${notFronting} ${
+      byFronting || byOpen
+        ? 'A taller footprint that fronts the way or keeps the front open space carries less floor area.'
+        : `No ${needDepth} m front open space fits either (envelope footprint: band ${m1(po?.bandM ?? 0)}, needs >= ${m1(po?.needBandM ?? 0)}${po && po.bandM >= po.needBandM ? ', not connected to the road by >= 6 m' : ''}).`
+    }`,
   }
 }
 
@@ -590,12 +625,17 @@ export function generateDesignSet(pipeline: PipelineResult, rules: ZoneRules, in
           // polygon-clipping occasionally fails on a degenerate configuration; retry on a plot nudged by < 1 mm.
           const plot = jitter(dp.plot, attempt)
           const e = ov.ignoreSetbacks ? plot : erodeFrom(plot, dp.offsets, 0)
-          const base = e && dp.clip && !ov.ignoreSetbacks ? clipToDepth(e, dp.clip, dp.clip.depthM) : e
+          const base = e && dp.clip && !ov.ignoreSetbacks ? clipToDepth(e, dp.clip, dp.clip.nearM, dp.clip.depthM) : e
           result = base ? TEMPLATES[id](makeCtx(plot, [base[0]])) : null
         }
       } catch (err) {
         if (attempt === 2) console.warn(`[designs] template ${id} failed`, err)
       }
+    }
+    if (result && cap !== undefined) {
+      // The storey cap only matters to designs it actually limits; a 2-floor design is not "capped".
+      if (result.defaults.floors < cap) result.notes = result.notes.filter((n) => n !== dp.note)
+      else result.floorsCap = cap
     }
     if (result) designs.push(result)
     else

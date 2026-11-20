@@ -375,3 +375,30 @@ export function polygonIntersectionArea(a: MetricPolygon, b: MetricPolygon): num
 export function closePolygon(poly: MetricPolygon): Position[][] {
   return poly.map((r) => closeRing(r))
 }
+
+/**
+ * Open corridor space of half-width `half`: the plot eroded by `half` minus the footprint dilated
+ * by `half` (union of the footprint, a strip per edge and a disc per vertex). Every point of the
+ * result is the centre of a disc of radius `half` that lies in the plot and clear of the building,
+ * so two points in one component are joined by a corridor at least 2 x half wide. Empty on failure.
+ */
+export function openCorridorSpace(plot: MetricPolygon, footprintOuter: MetricRing, half: number): MetricMultiPolygon {
+  const eroded = erodePolygon(plot, half, { withRemoved: false }).polygon
+  if (!eroded) return []
+  const ring = dropClosingPoint(footprintOuter) as MetricRing
+  const ox = ring[0][0]
+  const oy = ring[0][1]
+  const local = ring.map(([x, y]) => [x - ox, y - oy] as [number, number])
+  const parts: MetricPolygon[] = [[local]]
+  for (let i = 0; i < local.length; i++) {
+    const s = edgeStrip(local[i], local[(i + 1) % local.length], half, -0.001, -0.001)
+    if (s.length === 4) parts.push([s])
+    parts.push([circle(local[i], half)])
+  }
+  try {
+    const dil = pc.union(parts[0], ...parts.slice(1))
+    return pc.difference(translate(eroded, -ox, -oy), dil).map((p) => translate(p, ox, oy))
+  } catch {
+    return []
+  }
+}

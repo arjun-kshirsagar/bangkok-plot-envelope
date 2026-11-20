@@ -44,6 +44,8 @@ export interface Design {
   /** Template defaults, so the UI can show what an override changed. */
   defaults: { floors: number }
   overrides: DesignOverrides
+  /** Storey cap applied by the frontage rule (ข้อ 52(6) residential exemption), when it limits this design. */
+  floorsCap?: number
 }
 
 export interface DesignOverrides {

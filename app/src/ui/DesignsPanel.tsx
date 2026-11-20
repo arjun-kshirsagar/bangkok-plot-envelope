@@ -98,7 +98,11 @@ export function DesignsPanel() {
             onChange={(e) => setOverride(design.id, { floors: Number(e.target.value) })}
             aria-label="Design floors override"
           />
-          <span className="sub">Push past {pipeline.envelope.maxFloors} floors to see the height and FAR rows fail.</span>
+          <span className="sub">
+            {design.floorsCap !== undefined
+              ? `Capped at ${design.floorsCap} storeys by the frontage rule; more floors will fail the frontage row.`
+              : `Push past ${pipeline.envelope.maxFloors} floors to see the height and FAR rows fail.`}
+          </span>
         </label>
         <label className="toggle">
           <input type="checkbox" checked={Boolean(ov.ignoreSetbacks)} onChange={(e) => setOverride(design.id, { ignoreSetbacks: e.target.checked })} />

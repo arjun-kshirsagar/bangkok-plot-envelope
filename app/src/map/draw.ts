@@ -49,7 +49,7 @@ function validationMessage(reason: string | undefined, drawing: boolean): string
   if (reason && /vertices/.test(reason)) return `${reason}: the plot is capped at ${MAX_PLOT_VERTICES} vertices to keep the geometry fast. Close the outline or remove a vertex.`
   return drawing
     ? 'That vertex would make the outline cross itself, so it was not added. Click somewhere that keeps the edges apart.'
-    : 'That move would make the outline cross itself, so it was undone. Drag the vertex somewhere that keeps the edges apart.'
+    : 'That move would make the outline cross itself, so the vertex stopped at its last valid position. Drag it somewhere that keeps the edges apart.'
 }
 
 export interface DrawController {

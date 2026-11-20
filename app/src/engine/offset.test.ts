@@ -170,3 +170,19 @@ describe('erodePolygon with unequal adjacent distances', () => {
     }
   })
 })
+
+describe('ข้อ 52(6) front open space connection', () => {
+  it('reaches the road through a dog-leg corridor >= 6 m wide, and not through a 5 m one', async () => {
+    const { openSpaceRoute } = await import('./frontage')
+    const fpRing: MetricRing = [[36, 44], [64, 44], [64, 64], [36, 64]]
+    const front: [[number, number], [number, number]] = [[0, 0], [12, 0]]
+    const wide: MetricRing = [[0, 0], [12, 0], [12, 20], [70, 20], [70, 70], [30, 70], [30, 32], [0, 32]]
+    const ok = openSpaceRoute(fpRing, wide, front, 12, 1 / 6)
+    expect(ok.bandM).toBeCloseTo(28, 0)
+    expect(ok.pass).toBe(true)
+    expect(ok.connection).toMatch(/corridor/)
+    const narrow: MetricRing = [[0, 0], [12, 0], [12, 27], [70, 27], [70, 70], [30, 70], [30, 32], [0, 32]]
+    const bad = openSpaceRoute(fpRing, narrow, front, 12, 1 / 6)
+    expect(bad.pass).toBe(false)
+  })
+})

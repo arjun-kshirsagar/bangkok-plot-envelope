@@ -233,25 +233,27 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   // 9. BMA frontage (ข้อ 52(6) / 53): fronting the public way, or the front open-space alternative.
   const fp = frontageParams(rules)
   if (frontageApplies(fp, design.floors, design.heightM)) {
-    const v = frontageVerdict(design.footprint[0], front, design.floors, fp)
+    const v = frontageVerdict(design.footprint[0], metric.plot[0], front, design.floors, fp)
     const fr = v.fr
+    const o = v.open
+    const notFronting = `Does not front the road: road-side building line ${m(fr.lineM, 1)}, needs > ${m(fp.minFraction * fr.perimeterM, 1)} (1/${Math.round(1 / fp.minFraction)} of ${m(fr.perimeterM, 0)} perimeter) within ${fp.maxDistM} m (nearest ${m(fr.distanceM, 1)}).`
     rows.push({
       ruleId: 'bma-frontage',
-      label: 'Fronting the public way',
-      requirement: `Road-facing building line > 1/${Math.round(1 / fp.minFraction)} of the outer perimeter and <= ${fp.maxDistM} m from the public way (ข้อ 53); otherwise a ${v.needDepthM} m front open space over >= 1/${Math.round(1 / fp.openFraction)} of the perimeter (ข้อ 52(6)).`,
-      actual: v.fronting || !v.openSpaceRoute
-        ? `line ${m(fr.lineM, 1)} of ${m(fr.perimeterM, 1)} perimeter, ${m(fr.distanceM, 1)} from the road`
-        : `front open space ${m(fr.distanceM, 1)} deep, ${m(v.frontEdgeM, 1)} wide (perimeter ${m(fr.perimeterM, 1)})`,
-      allowed: v.fronting || !v.openSpaceRoute
-        ? `line > ${m(fp.minFraction * fr.perimeterM, 1)}, distance <= ${fp.maxDistM} m; or open space >= ${v.needDepthM} m deep`
-        : `>= ${v.needDepthM} m deep, >= ${m(fp.openFraction * fr.perimeterM, 1)} wide`,
+      label: v.fronting ? 'Fronting the public way' : 'Front open space (not fronting)',
+      requirement: `ข้อ 53: road-facing building line > 1/${Math.round(1 / fp.minFraction)} of the outer perimeter and <= ${fp.maxDistM} m from the public way; otherwise ข้อ 52(6): a front open space >= ${v.needDepthM} m deep, continuous (with joined side space) for >= 1/${Math.round(1 / fp.openFraction)} of the perimeter, reaching the public way by a >= ${fp.internalRoadM} m internal road.`,
+      actual: v.fronting
+        ? `fronts: line ${m(fr.lineM, 1)} of ${m(fr.perimeterM, 1)} perimeter, ${m(fr.distanceM, 1)} from the road`
+        : `not fronting (line ${m(fr.lineM, 1)}); open band ${m(o?.bandM ?? 0, 1)} x ${v.needDepthM} m deep, ${o?.connected ? 'connected' : o && o.bandM >= o.needBandM ? 'not connected to the road' : 'too short'}`,
+      allowed: v.fronting
+        ? `line > ${m(fp.minFraction * fr.perimeterM, 1)} within ${fp.maxDistM} m`
+        : `band >= ${m(o?.needBandM ?? 0, 1)}, connected by >= ${fp.internalRoadM} m`,
       pass: v.pass,
       source: src('bma-frontage'),
       note: v.fronting
         ? undefined
-        : v.openSpaceRoute
-          ? `Not fronting the public way; passes by the ข้อ 52(6) route: the ${v.needDepthM} m front open space adjoins the road along the whole front edge.`
-          : `Neither fronting the public way (ข้อ 53) nor keeping a ${v.needDepthM} m front open space over 1/${Math.round(1 / fp.openFraction)} of the perimeter (ข้อ 52(6)).`,
+        : o?.pass
+          ? `${notFronting} Uses the ข้อ 52(6) front open space: ${v.needDepthM} m band, ${m(o.bandM, 1)} along the building (needs >= ${m(o.needBandM, 1)}), connected ${o.connection}.`
+          : `${notFronting} No ข้อ 52(6) front open space either: ${v.needDepthM} m band ${m(o?.bandM ?? 0, 1)} long (needs >= ${m(o?.needBandM ?? 0, 1)})${o && o.bandM >= o.needBandM ? ', and it does not reach the road through >= 6 m of open plot' : ''}.`,
     })
   } else {
     rows.push({
