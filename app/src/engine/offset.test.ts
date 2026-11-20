@@ -186,3 +186,23 @@ describe('ข้อ 52(6) front open space connection', () => {
     expect(bad.pass).toBe(false)
   })
 })
+
+describe('ข้อ 52(6) direct access is measured across the rays', () => {
+  // Pole of width w (x 0..w, y 0..20) into a 60 x 50 m body; the building's road-facing face is
+  // oblique (55 deg from the front-edge normal), so its length over the pole is ~1.74 w.
+  const t55 = Math.tan((55 * Math.PI) / 180)
+  const fpRing: MetricRing = [[-5, 35], [15, 35 + 20 * t55], [-5, 35 + 20 * t55]]
+  const plotFor = (w: number): MetricRing => [[0, 0], [w, 0], [w, 20], [40, 20], [40, 70], [-20, 70], [-20, 20], [0, 20]]
+  const front = (w: number): [[number, number], [number, number]] => [[0, 0], [w, 0]]
+  it('4 m pole under a 55 deg face fails (direct and corridor)', async () => {
+    const { openSpaceRoute } = await import('./frontage')
+    const r = openSpaceRoute(fpRing, plotFor(4), front(4), 12, 1 / 6)
+    expect(r.bandM).toBeGreaterThan(r.needBandM)
+    expect(r.pass).toBe(false)
+  })
+  it('6 m pole passes, 5.9 m fails', async () => {
+    const { openSpaceRoute } = await import('./frontage')
+    expect(openSpaceRoute(fpRing, plotFor(6), front(6), 12, 1 / 6).pass).toBe(true)
+    expect(openSpaceRoute(fpRing, plotFor(5.9), front(5.9), 12, 1 / 6).pass).toBe(false)
+  })
+})

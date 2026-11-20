@@ -9,7 +9,7 @@
  * Bangkok bounding box, the plot must validate, and the view is clamped.
  */
 import type { Polygon } from 'geojson'
-import { validatePlot } from '../engine/plot'
+import { MAX_PLOT_VERTICES, validatePlot } from '../engine/plot'
 import { isBuildingType, type BuildingType } from '../rules'
 import { DESIGN_IDS, type DesignId, type DesignOverrides } from '../designs/types'
 import type { MapView } from './types'
@@ -25,6 +25,8 @@ export interface UrlScene {
   /** Selected design and its overrides (`design=`, `dfl=` floors, `nosb=1` ignore setbacks). */
   design: DesignId | null
   designOverrides: DesignOverrides | null
+  /** Why a `plot=` parameter was not loaded (shown in the panel), if it was rejected. */
+  plotRejected?: string
 }
 
 function isDesignId(v: unknown): v is DesignId {
@@ -83,7 +85,17 @@ export function decodeScene(hash: string): UrlScene {
       const last = pts[pts.length - 1]
       const closed = first[0] === last[0] && first[1] === last[1] ? pts : [...pts, first]
       const candidate: Polygon = { type: 'Polygon', coordinates: [closed] }
-      if (validatePlot(candidate).ok) scene.plot = candidate
+      const v = validatePlot(candidate)
+      if (v.ok) scene.plot = candidate
+      else {
+        const n = closed.length - 1
+        scene.plotRejected = n > MAX_PLOT_VERTICES ? `Link plot has ${n} vertices; maximum ${MAX_PLOT_VERTICES}. The plot was not loaded.` : `The plot in this link was not loaded: ${v.reason}`
+      }
+    } else {
+      scene.plotRejected =
+        pts.length > 200
+          ? `Link plot has ${pts.length} vertices; maximum ${MAX_PLOT_VERTICES}. The plot was not loaded.`
+          : 'The plot in this link was not loaded: it needs at least 3 valid points inside Bangkok.'
     }
   }
 
@@ -160,6 +172,7 @@ export function hydrateStoreFromUrl(): void {
     if (scene.designOverrides) patch.designOverrides = { [scene.design]: scene.designOverrides }
   }
   useAppStore.getState().hydrate(patch)
+  if (scene.plotRejected) useAppStore.getState().setDrawNotice(scene.plotRejected)
 }
 
 /** Removes the scene from the URL (used by the error boundary's reset). */

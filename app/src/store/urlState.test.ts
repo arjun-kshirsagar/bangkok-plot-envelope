@@ -99,3 +99,15 @@ describe('worked example link', () => {
     }
   })
 })
+
+describe('rejected link plots', () => {
+  it('a 61-vertex plot is not loaded and says why', () => {
+    const pts = Array.from({ length: 61 }, (_, i) => {
+      const a = (2 * Math.PI * i) / 61
+      return `${(100.5724 + 0.0004 * Math.cos(a)).toFixed(7)},${(13.7363 + 0.0004 * Math.sin(a)).toFixed(7)}`
+    })
+    const s = decodeScene(`#plot=${pts.join(';')}`)
+    expect(s.plot).toBeNull()
+    expect(s.plotRejected).toBe('Link plot has 61 vertices; maximum 60. The plot was not loaded.')
+  })
+})

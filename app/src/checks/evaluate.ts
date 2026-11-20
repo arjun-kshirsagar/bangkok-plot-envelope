@@ -4,7 +4,7 @@
 import type { Position } from 'geojson'
 import type { Design } from '../designs/types'
 import { dropClosingPoint, pointToSegmentDistance, ringPerimeter, ringToSegmentDistance, segmentLength } from '../engine/geometry'
-import { frontage as frontageOf, frontageApplies, frontageParams, frontageVerdict, type FrontageResult } from '../engine/frontage'
+import { frontage as frontageOf, frontageApplies, isResidentialType, frontageParams, frontageVerdict, type FrontageResult } from '../engine/frontage'
 import { polygonArea, polygonIntersectionArea, type MetricPolygon } from '../engine/offset'
 import { boundarySetbackM, type PipelineInputs, type PipelineResult } from '../engine/pipeline'
 import { buildingTypeRules, getRule, ruleNumber } from '../rules/loadRules'
@@ -232,7 +232,7 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
 
   // 9. BMA frontage (ข้อ 52(6) / 53): fronting the public way, or the front open-space alternative.
   const fp = frontageParams(rules)
-  if (frontageApplies(fp, design.floors, design.heightM)) {
+  if (frontageApplies(fp, design.floors, design.heightM, isResidentialType(inputs.buildingType))) {
     const v = frontageVerdict(design.footprint[0], metric.plot[0], front, design.floors, fp)
     const fr = v.fr
     const o = v.open
@@ -253,7 +253,7 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
         ? undefined
         : o?.pass
           ? `${notFronting} Uses the ข้อ 52(6) front open space: ${v.needDepthM} m band, ${m(o.bandM, 1)} along the building (needs >= ${m(o.needBandM, 1)}), connected ${o.connection}.`
-          : `${notFronting} No ข้อ 52(6) front open space either: ${v.needDepthM} m band ${m(o?.bandM ?? 0, 1)} long (needs >= ${m(o?.needBandM ?? 0, 1)})${o && o.bandM >= o.needBandM ? ', and it does not reach the road through >= 6 m of open plot' : ''}.`,
+          : `${notFronting} No ข้อ 52(6) front open space either: ${v.needDepthM} m band ${m(o?.bandM ?? 0, 1)} long (needs >= ${m(o?.needBandM ?? 0, 1)})${o && o.bandM >= o.needBandM ? `, and it does not reach the road through >= ${fp.internalRoadM} m of open plot` : ''}.`,
     })
   } else {
     rows.push({

@@ -59,7 +59,88 @@ function independentFrontageOk(d: Design, plot: Position[], fi: number): boolean
     const pts = [0.25, 0.5, 0.75].flatMap((t) => [depth / 2, depth - 0.1].map((k) => [p[0] + (q[0] - p[0]) * t + ox * k, p[1] + (q[1] - p[1]) * t + oy * k]))
     if (pts.every((pt) => pip(pt, plot) && !pip(pt, F))) openFace = true
   }
-  return (line > perim / 8 && minDist <= 20 + 1e-6) || openFace
+  if (line > perim / 8 && minDist <= 20 + 1e-6) return true
+  return openFace && openRunAndAccessOk(F, plot, a, b, nx, ny, area2 > 0, depth, perim)
+}
+
+/** Plain re-implementation of the ข้อ 52(6) run (>= P/6 incl. joined sides) and a 1 m grid flood fill for the 6 m access. */
+function openRunAndAccessOk(F: Position[], plot: Position[], a: Position, b: Position, nx: number, ny: number, ccw: boolean, depth: number, perim: number): boolean {
+  const open = (x: number, y: number) => pip([x, y], plot) && !pip([x, y], F)
+  const samples: { x: number; y: number; ox: number; oy: number; ok: boolean; facing: boolean; len: number }[] = []
+  for (let i = 0; i < F.length; i++) {
+    const p = F[i]
+    const q = F[(i + 1) % F.length]
+    const len = Math.hypot(q[0] - p[0], q[1] - p[1])
+    if (len === 0) continue
+    const ox = ccw ? (q[1] - p[1]) / len : -(q[1] - p[1]) / len
+    const oy = ccw ? -(q[0] - p[0]) / len : (q[0] - p[0]) / len
+    const k = Math.max(1, Math.round(len / 0.5))
+    for (let j = 0; j < k; j++) {
+      const x = p[0] + ((q[0] - p[0]) * (j + 0.5)) / k
+      const y = p[1] + ((q[1] - p[1]) * (j + 0.5)) / k
+      let ok = true
+      for (let dd = 0.3; dd <= depth - 0.05 + 1e-9; dd += 0.5) if (!open(x + ox * dd, y + oy * dd)) ok = false
+      samples.push({ x, y, ox, oy, ok, facing: ox * nx + oy * ny > 0.5, len: len / k })
+    }
+  }
+  // Longest circular run with a road-facing sample.
+  const n = samples.length
+  let best: typeof samples = []
+  for (let i = 0; i < n; i++) {
+    if (!samples[i].ok || samples[(i - 1 + n) % n].ok) continue
+    const run: typeof samples = []
+    for (let k = 0; k < n && samples[(i + k) % n].ok; k++) run.push(samples[(i + k) % n])
+    if (run.some((r) => r.facing) && run.length > best.length) best = run
+  }
+  if (samples.every((x) => x.ok)) best = samples
+  if (best.reduce((t, r) => t + r.len, 0) < perim / 6 - 1e-6) return false
+  // Grid flood fill at 1 m over cells >= 2.9 m from the plot boundary and the building.
+  const xs = plot.map((p) => p[0])
+  const ys = plot.map((p) => p[1])
+  const x0 = Math.min(...xs)
+  const y0 = Math.min(...ys)
+  const W = Math.ceil(Math.max(...xs) - x0) + 1
+  const H = Math.ceil(Math.max(...ys) - y0) + 1
+  const minD = (x: number, y: number, ring: Position[]) => {
+    let m = Infinity
+    for (let i = 0; i < ring.length; i++) m = Math.min(m, segDist([x, y], ring[i], ring[(i + 1) % ring.length]))
+    return m
+  }
+  const free = new Uint8Array(W * H)
+  for (let j = 0; j < H; j++)
+    for (let i = 0; i < W; i++) {
+      const x = x0 + i + 0.5
+      const y = y0 + j + 0.5
+      if (open(x, y) && minD(x, y, plot) >= 2.9 && minD(x, y, F) >= 2.9) free[j * W + i] = 1
+    }
+  const seen = new Uint8Array(W * H)
+  const stack: number[] = []
+  for (let c = 0; c < W * H; c++) if (free[c] && segDist([x0 + (c % W) + 0.5, y0 + Math.floor(c / W) + 0.5], a, b) <= 3.6) { seen[c] = 1; stack.push(c) }
+  while (stack.length) {
+    const c = stack.pop()!
+    const i = c % W
+    const j = Math.floor(c / W)
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const ii = i + di
+      const jj = j + dj
+      if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue
+      const cc = jj * W + ii
+      if (free[cc] && !seen[cc]) { seen[cc] = 1; stack.push(cc) }
+    }
+  }
+  // Some facing band sample, at mid-depth, sits in (or next to) a reached cell.
+  return best.some((r) => {
+    if (!r.facing) return false
+    const x = r.x + r.ox * Math.max(3, depth / 2)
+    const y = r.y + r.oy * Math.max(3, depth / 2)
+    for (let dj = -1; dj <= 1; dj++)
+      for (let di = -1; di <= 1; di++) {
+        const i = Math.floor(x - x0) + di
+        const j = Math.floor(y - y0) + dj
+        if (i >= 0 && j >= 0 && i < W && j < H && seen[j * W + i]) return true
+      }
+    return false
+  })
 }
 
 const ROADS = [6, 8, 10, 12, 20, 30]

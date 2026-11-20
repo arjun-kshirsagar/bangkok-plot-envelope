@@ -70,6 +70,39 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
     }
     return v
   }
+  // Select-mode flags; midpoint insertion is switched off at the vertex cap (Terra Draw throws
+  // "Failed to insert midpoint coordinate" when validation rejects a midpoint).
+  const selectFlags = (midpoints: boolean) => ({
+    polygon: {
+      feature: {
+        validation: (feature: GeoJSONStoreFeatures) => {
+          const v = ValidateNotSelfIntersecting(feature)
+          if (!v.valid) return report(v, false)
+          const n = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0].length - 1 : 0
+          return report(n <= MAX_PLOT_VERTICES ? { valid: true } : { valid: false, reason: `Maximum ${MAX_PLOT_VERTICES} vertices` }, false)
+        },
+        draggable: false,
+        rotateable: false,
+        scaleable: false,
+        // true: let our validation reject crossing drags so the panel can say why; with false
+        // Terra Draw refuses them silently before custom validation runs.
+        selfIntersectable: true,
+        coordinates: { midpoints, draggable: true, deletable: true },
+      },
+    },
+  })
+  let midpointsOn = true
+  const syncMidpoints = (plot: Polygon | null) => {
+    const n = plot ? plot.coordinates[0].length - 1 : 0
+    const want = n < MAX_PLOT_VERTICES
+    if (want === midpointsOn) return
+    midpointsOn = want
+    try {
+      draw.updateModeOptions<typeof TerraDrawSelectMode>('select', { flags: selectFlags(want) })
+    } catch (err) {
+      console.warn('[draw] could not update midpoints', err)
+    }
+  }
   const draw = new TerraDraw({
     adapter: new TerraDrawMapLibreGLAdapter({ map, coordinatePrecision: 9 }),
     modes: [
@@ -96,29 +129,7 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
         },
       }),
       new TerraDrawSelectMode({
-        flags: {
-          polygon: {
-            feature: {
-              validation: (feature) => {
-                const v = ValidateNotSelfIntersecting(feature)
-                if (!v.valid) return report(v, false)
-                const n = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0].length - 1 : 0
-                return report(n <= MAX_PLOT_VERTICES ? { valid: true } : { valid: false, reason: `Maximum ${MAX_PLOT_VERTICES} vertices` }, false)
-              },
-              draggable: false,
-              rotateable: false,
-              scaleable: false,
-              // true: let our validation (below) reject crossing drags so the panel can say why;
-          // with false Terra Draw refuses them silently before custom validation runs.
-          selfIntersectable: true,
-              coordinates: {
-                midpoints: true,
-                draggable: true,
-                deletable: true,
-              },
-            },
-          },
-        },
+        flags: selectFlags(true),
         styles: {
           selectedPolygonColor: PLOT_FILL_COLOR,
           selectedPolygonFillOpacity: 0.2,
@@ -165,6 +176,7 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
       const f = draw.getSnapshotFeature(id)
       if (f && f.geometry.type === 'Polygon' && f.properties.mode === 'polygon') {
         currentId = id
+        syncMidpoints(polygonOf(f))
         handlers.onPlotChange(polygonOf(f))
         return
       }
@@ -184,6 +196,7 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
       .filter((v): v is string | number => v !== undefined)
     if (others.length) draw.removeFeatures(others)
     currentId = id
+    syncMidpoints(polygonOf(draw.getSnapshotFeature(id)))
     handlers.onPlotChange(polygonOf(draw.getSnapshotFeature(id)))
     handlers.onDrawFinished()
   })
@@ -223,6 +236,7 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
   }
 
   const loadPlot = (plot: Polygon | null) => {
+    syncMidpoints(plot)
     syncing = true
     draw.clear()
     currentId = null

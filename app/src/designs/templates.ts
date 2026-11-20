@@ -5,7 +5,7 @@
 import type { Polygon, Position } from 'geojson'
 import { closePolygon, erodePolygon, erodeToArea, largestPiece, polygonArea, polygonIntersection, type MetricPolygon } from '../engine/offset'
 import { dropClosingPoint, ringPerimeter } from '../engine/geometry'
-import { frontageApplies, frontageParams, frontageVerdict } from '../engine/frontage'
+import { frontageApplies, frontageParams, frontageVerdict, isResidentialType } from '../engine/frontage'
 import type { PipelineInputs, PipelineResult } from '../engine/pipeline'
 import { toWgs84 } from '../engine/projection'
 import type { ZoneRules } from '../rules/types'
@@ -442,7 +442,7 @@ interface DesignPlot {
  */
 const FRONTAGE_SEARCH = { minAreaM2: 50, startInsetM: 4, resolutionM: 0.5, steps: 8 } as const
 
-function designPlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | null {
+function designPlot(pipeline: PipelineResult, rules: ZoneRules, residential: boolean): DesignPlot | null {
   const metric = pipeline.metric
   const env = pipeline.envelope
   if (!metric || !metric.footprint || !env) return null
@@ -450,7 +450,7 @@ function designPlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | nu
   const fp = frontageParams(rules)
   const floors = env.floorsByHeight
   // Applies only above the residential exemption (floors > 3 implies the > 2 storeys trigger).
-  if (!frontageApplies(fp, floors, 0)) return plain
+  if (!frontageApplies(fp, floors, 0, residential)) return plain
   const ring = dropClosingPoint(metric.plot[0])
   const fi = metric.frontEdgeIndex
   const front: [Position, Position] = [ring[fi], ring[(fi + 1) % ring.length]]
@@ -475,6 +475,7 @@ function designPlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | nu
   const needDepth = floors > fp.tierStoreys ? fp.frontOpenTallM : fp.frontOpenM
   const { minAreaM2, startInsetM, resolutionM, steps } = FRONTAGE_SEARCH
 
+  let lastVerdict: { v: ReturnType<typeof verdict>; near: number } | null = null
   /** Envelope footprint kept between depths `near` and `far` from the front line. */
   const attempt = (near: number, far: number, route: 'fronting' | 'open'): { dp: DesignPlot; v: ReturnType<typeof verdict> } | null => {
     const clip = near <= dMin && far >= dMax ? undefined : (makeDepthClip(metric.plot, fi, far, near) ?? undefined)
@@ -487,6 +488,7 @@ function designPlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | nu
     }
     if (!base || polygonArea(base) < minAreaM2) return null
     const v = verdict(base)
+    lastVerdict = { v, near }
     if (route === 'fronting' ? !v.fronting : !v.open?.pass) return null
     return { dp: { plot: metric.plot, offsets: metric.footprintOffsets, base: [base[0]], note: null, clip }, v }
   }
@@ -507,9 +509,13 @@ function designPlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | nu
     return { ...best, D: lo }
   }
   // ข้อ 52(6): smallest push-back of the building (near depth) that leaves the front open space.
+  // Verdict of the deepest push-back tried for the open-space route, to explain a failure.
+  let deepestOpen: { v: ReturnType<typeof verdict>; near: number } | null = null
   const searchOpen = () => {
     let hi = dMax - startInsetM
+    lastVerdict = null
     let best = attempt(hi, Infinity, 'open')
+    deepestOpen = lastVerdict
     if (!best) return null
     let lo = dMin
     for (let i = 0; i < steps && hi - lo > resolutionM; i++) {
@@ -543,14 +549,21 @@ function designPlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | nu
     byOpen.dp.note = `${notFronting} Uses the ข้อ 52(6) front open space: building pushed back to ${m1(byOpen.D)} from the road edge line, ${needDepth} m band ${m1(o.bandM)} along the building (needs >= ${m1(o.needBandM)}), connected ${o.connection}.`
     return byOpen.dp
   }
-  const po = plainVerdict.open
+  if (!residential) return plain // no storey exemption for non-residential buildings: the checklist shows the failure
+  const deep = deepestOpen as { v: ReturnType<typeof verdict>; near: number } | null
+  const po = deep?.v.open ?? plainVerdict.open
+  const why = po
+    ? po.bandM < po.needBandM
+      ? `the ${needDepth} m band is ${m1(po.bandM)} along the building, needs >= ${m1(po.needBandM)}`
+      : `a ${needDepth} m band ${m1(po.bandM)} long exists (needs >= ${m1(po.needBandM)}) but it does not reach the road through open plot >= ${fp.internalRoadM} m wide`
+    : `no band could be tested`
   return {
     ...plain,
     floorsCap: fp.exemptStoreys,
     note: `Capped at ${fp.exemptStoreys} storeys (residential buildings of <= ${fp.exemptStoreys} storeys are exempt from ข้อ 52(6) / 53). ${notFronting} ${
       byFronting || byOpen
         ? 'A taller footprint that fronts the way or keeps the front open space carries less floor area.'
-        : `No ${needDepth} m front open space fits either (envelope footprint: band ${m1(po?.bandM ?? 0)}, needs >= ${m1(po?.needBandM ?? 0)}${po && po.bandM >= po.needBandM ? ', not connected to the road by >= 6 m' : ''}).`
+        : `No ข้อ 52(6) front open space fits either: with the building pushed back${deep ? ` to ${m1(deep.near)} from the road edge line` : ''}, ${why}.`
     }`,
   }
 }
@@ -594,7 +607,7 @@ export function generateDesignSet(pipeline: PipelineResult, rules: ZoneRules, in
     try {
       dp = ov.ignoreSetbacks
         ? { plot: metric.plot, offsets: zeros, base: [metric.plot[0]], note: null }
-        : (fp ??= designPlot(pipeline, rules) ?? { plot: metric.plot, offsets: metric.footprintOffsets, base: [metric.footprint[0]], note: null })
+        : (fp ??= designPlot(pipeline, rules, isResidentialType(inputs.buildingType)) ?? { plot: metric.plot, offsets: metric.footprintOffsets, base: [metric.footprint[0]], note: null })
     } catch {
       dp = fp = { plot: metric.plot, offsets: metric.footprintOffsets, base: [metric.footprint[0]], note: null }
     }

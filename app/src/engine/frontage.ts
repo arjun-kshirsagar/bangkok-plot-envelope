@@ -108,9 +108,18 @@ export function frontageParams(rules: ZoneRules): FrontageParams {
   }
 }
 
-/** True when ข้อ 52(6) / 53 applies at all: > 2 storeys or > 8 m, and not residential <= 3 storeys. */
-export function frontageApplies(p: FrontageParams, floors: number, heightM: number): boolean {
-  return (floors > p.triggerStoreys || heightM > p.triggerHeightM + 1e-6) && floors > p.exemptStoreys
+/**
+ * True when ข้อ 52(6) / 53 applies at all: > 2 storeys or > 8 m, and not residential <= 3 storeys.
+ * The <= 3-storey exemption is for residential buildings only (อาคารอยู่อาศัย), so a non-residential
+ * type (office, if ever enabled) stays subject to the clause.
+ */
+export function frontageApplies(p: FrontageParams, floors: number, heightM: number, residential = true): boolean {
+  return (floors > p.triggerStoreys || heightM > p.triggerHeightM + 1e-6) && !(residential && floors <= p.exemptStoreys)
+}
+
+/** Building types the exemption covers (the app's condo and low-rise types are both residential). */
+export function isResidentialType(type: string): boolean {
+  return type === 'condo' || type === 'lowRiseResidential'
 }
 
 export interface OpenSpaceResult {
@@ -239,27 +248,36 @@ export function openSpaceRoute(
   if (bandM < needBandM - 1e-6) return fail(bandM)
 
   // (c) Direct: rays from facing band samples straight to the front edge through open plot.
-  const rayHitsFront = (s: Sample): boolean => {
-    // Ray s + t * nf against segment a + u * (b - a): cross-product solution.
+  /** Where the ray s + t * nf meets the front edge (parameter u along it), or null when blocked or missing. */
+  const rayHitsFront = (s: Sample): number | null => {
     const ex = b[0] - a[0]
     const ey = b[1] - a[1]
     const den = nfx * ey - nfy * ex
-    if (Math.abs(den) < 1e-9) return false
+    if (Math.abs(den) < 1e-9) return null
     const wx = a[0] - s.x
     const wy = a[1] - s.y
     const t = (wx * ey - wy * ex) / den
     const u = (wx * nfy - wy * nfx) / den
-    if (!(t > 0) || u < 0 || u > 1) return false
-    for (let d = 0.3; d < t - 0.3; d += 1) if (!open([s.x + nfx * d, s.y + nfy * d])) return false
-    return true
+    if (!(t > 0) || u < 0 || u > 1) return null
+    for (let d = 0.3; d < t - 0.3; d += 1) if (!open([s.x + nfx * d, s.y + nfy * d])) return null
+    return u
   }
-  let clear = 0
+  // Width of the straight path = span of the clear rays' hit points along the front edge (measured
+  // across the rays, so an oblique face does not count its length). Spans between sample centres
+  // under-measure by under one sample; an exactly 6 m opening is then decided by the corridor test.
+  let uMin = Infinity
+  let uMax = -Infinity
   let longestClear = 0
   for (const s of best) {
-    if (s.facing && rayHitsFront(s)) {
-      clear += s.len
-      longestClear = Math.max(longestClear, clear)
-    } else clear = 0
+    const u = s.facing ? rayHitsFront(s) : null
+    if (u === null) {
+      uMin = Infinity
+      uMax = -Infinity
+      continue
+    }
+    uMin = Math.min(uMin, u)
+    uMax = Math.max(uMax, u)
+    longestClear = Math.max(longestClear, (uMax - uMin) * fl)
   }
   if (longestClear >= corridorM - 1e-6) return { needDepthM, bandM, needBandM, connected: true, connection: `by a straight open path at least ${corridorM} m wide to the road edge`, pass: true }
 

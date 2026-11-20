@@ -134,7 +134,7 @@ export function SidePanel() {
             </dl>
           )}
           {hasPlot && !plotOk && <p className="warn">{validation.reason}</p>}
-          {drawNotice && (mode === 'draw' || mode === 'edit') && (
+          {drawNotice && (mode === 'draw' || mode === 'edit' || !hasPlot) && (
             <p className="warn" role="status">
               {drawNotice}
             </p>
