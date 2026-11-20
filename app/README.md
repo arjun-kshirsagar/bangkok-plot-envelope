@@ -79,7 +79,7 @@ no OSM building footprint on it; the 10 m right-of-way is assumed:
 "Load worked example (docs)": the research worked example (40 × 40 m, 12 m soi, condo →
 784 m² footprint, 36 m, 12 floors, 9,408 m² GFA):
 
-`#plot=100.5724,13.7363;100.5727699,13.7363;100.5727699,13.73666175;100.5724,13.73666175&front=0&road=12&type=condo`
+`#plot=100.57240373,13.73630204;100.57277357,13.73629968;100.57277598,13.73666123;100.57240614,13.73666359&front=0&road=12&type=condo`
 
 Decisions and assumptions: `../docs/DECISIONS.md`. Research notes and worked example: `../docs/RESEARCH.md`.
 Sources: `../docs/SOURCES.md` (also shown in-app under "Sources & assumptions").

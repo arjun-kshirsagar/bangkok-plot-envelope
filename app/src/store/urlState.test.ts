@@ -83,3 +83,19 @@ describe('URL scene state', () => {
     expect(encodeScene({ plot: null, frontEdgeIndex: null, roadWidthM: null, buildingType: null, floorToFloorM: null, view: null, design: null, designOverrides: null })).toBe('')
   })
 })
+
+describe('worked example link', () => {
+  it('is an exact 40 m UTM square: 1,600 m2 plot, 784 m2 footprint, 12 floors, 9,408 m2 GFA (also after re-encoding)', async () => {
+    const { WORKED_EXAMPLE_HASH } = await import('../ui/example')
+    const { runPipeline } = await import('../engine/pipeline')
+    const { ZONE_RULES } = await import('../rules')
+    const first = decodeScene(WORKED_EXAMPLE_HASH)
+    for (const s of [first, decodeScene(`#${encodeScene({ ...first, view: null, design: null, designOverrides: null } as UrlScene)}`)]) {
+      const r = runPipeline({ plot: s.plot!, frontEdgeIndex: s.frontEdgeIndex!, roadWidthM: s.roadWidthM!, buildingType: s.buildingType!, floorToFloorM: 3 }, ZONE_RULES)
+      expect(Math.round(r.metric!.plotAreaM2)).toBe(1600)
+      expect(Math.round(r.envelope!.footprintAreaM2)).toBe(784)
+      expect(r.envelope!.maxFloors).toBe(12)
+      expect(Math.round(r.envelope!.gfaM2)).toBe(9408)
+    }
+  })
+})

@@ -4,11 +4,10 @@
  */
 import type { Polygon, Position } from 'geojson'
 import { closePolygon, erodePolygon, erodeToArea, largestPiece, polygonArea, polygonIntersection, type MetricPolygon } from '../engine/offset'
-import { dropClosingPoint, pointToSegmentDistance, ringPerimeter } from '../engine/geometry'
-import { frontage, isFronting } from '../engine/frontage'
+import { dropClosingPoint, ringPerimeter } from '../engine/geometry'
+import { frontageApplies, frontageParams, frontageVerdict } from '../engine/frontage'
 import type { PipelineInputs, PipelineResult } from '../engine/pipeline'
 import { toWgs84 } from '../engine/projection'
-import { ruleNumber } from '../rules/loadRules'
 import type { ZoneRules } from '../rules/types'
 import {
   COURTYARD_DEPTH_M,
@@ -42,13 +41,66 @@ function erodeFrom(source: MetricPolygon, offsets: number[], extraM: number): Me
 
 /** Erosion of `source` by `offsets + extra`, memoised by extra (one template run probes the same offsets repeatedly). */
 type Eroder = (extraM: number) => MetricPolygon | null
-function cachedEroder(source: MetricPolygon, offsets: number[]): Eroder {
+function cachedEroder(source: MetricPolygon, offsets: number[], clip?: DepthClip): Eroder {
   const cache = new Map<string, MetricPolygon | null>()
   return (extraM: number) => {
     const key = extraM.toFixed(4)
-    if (!cache.has(key)) cache.set(key, erodeFrom(source, offsets, extraM))
+    if (!cache.has(key)) {
+      const e = erodeFrom(source, offsets, extraM)
+      cache.set(key, e && clip ? clipToDepth(e, clip, clip.depthM - extraM) : e)
+    }
     return cache.get(key) ?? null
   }
+}
+
+/** Keeps only the part of the plot within `depthM` of the front-edge line (the rear of a design cut back from the road). */
+interface DepthClip {
+  /** A point on the front edge line, its unit direction and the unit normal pointing into the plot. */
+  a: [number, number]
+  u: [number, number]
+  n: [number, number]
+  /** Half-length of the clip strip along the front line (covers the whole plot). */
+  halfLen: number
+  depthM: number
+}
+
+function makeDepthClip(plot: MetricPolygon, frontIdx: number, depthM: number): DepthClip | null {
+  const ring = dropClosingPoint(plot[0])
+  const k = ring.length
+  const a = ring[frontIdx]
+  const b = ring[(frontIdx + 1) % k]
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1])
+  if (len === 0) return null
+  const u: [number, number] = [(b[0] - a[0]) / len, (b[1] - a[1]) / len]
+  let n: [number, number] = [-u[1], u[0]]
+  let cx = 0
+  let cy = 0
+  for (const p of ring) {
+    cx += p[0] / k
+    cy += p[1] / k
+  }
+  if ((cx - a[0]) * n[0] + (cy - a[1]) * n[1] < 0) n = [-n[0], -n[1]]
+  return { a: [a[0], a[1]], u, n, halfLen: ringPerimeter(ring), depthM }
+}
+
+/**
+ * Eroded footprint intersected with the strip within `depthM` of the front line. Clipping the
+ * eroded ORIGINAL plot (rather than eroding a cut plot) keeps every original edge's full
+ * setback, including near where the cut line meets an oblique boundary.
+ */
+function clipToDepth(poly: MetricPolygon, c: DepthClip, depthM: number): MetricPolygon | null {
+  if (depthM <= 0) return null
+  const { a, u, n, halfLen: L } = c
+  const strip: MetricPolygon = [
+    [
+      [a[0] - u[0] * L - n[0] * L, a[1] - u[1] * L - n[1] * L],
+      [a[0] + u[0] * L - n[0] * L, a[1] + u[1] * L - n[1] * L],
+      [a[0] + u[0] * L + n[0] * depthM, a[1] + u[1] * L + n[1] * depthM],
+      [a[0] - u[0] * L + n[0] * depthM, a[1] - u[1] * L + n[1] * depthM],
+    ],
+  ]
+  const r = largestPiece(polygonIntersection(poly, strip)).polygon
+  return r ? [dropClosingPoint(r[0]) as [number, number][], ...r.slice(1)] : null
 }
 
 interface TemplateContext {
@@ -142,7 +194,7 @@ export function slabTemplate(ctx: TemplateContext): Design | null {
   if (ctx.maxFloors < 1) return null
   const floors = ctx.overrides.floors ?? ctx.maxFloors
   const b = block('slab', 'Slab', ctx.base, 0, floors, ctx.f2f)
-  const notes = [`Footprint ${ctx.frontageNote ? 'is the envelope footprint cut back from the rear' : 'equals the envelope footprint'} (${fmt(b.areaM2)} m2), ${floors} floors x ${ctx.f2f} m.`]
+  const notes = [`Footprint ${ctx.frontageNote ? 'follows the frontage rule (see below)' : 'equals the envelope footprint'} (${fmt(b.areaM2)} m2), ${floors} floors x ${ctx.f2f} m.`]
   const limitedBy: DesignLimit = ctx.overrides.floors !== undefined ? 'override' : ctx.pipeline.envelope?.bindingRule === 'far' ? 'far' : 'height'
   if (limitedBy === 'override') notes.push(`Floors overridden by user (template default ${ctx.maxFloors}).`)
   return finish('slab', 'Full-envelope slab', 'The envelope built out as one block: maximum footprint, maximum floors.', ctx, [b], ctx.base, notes, limitedBy, ctx.maxFloors)
@@ -165,7 +217,9 @@ export function podiumTowerTemplate(ctx: TemplateContext): Design | null {
 
   // Target GFA and the tower area that achieves it with the maximum tower floors.
   // OSR (4% of GFA) also caps the GFA for this ground footprint.
-  const osrCap = osrGfaMax(ctx, F)
+  // With setbacks ignored the footprint is the whole plot, so the OSR cap would be 0 and collapse the
+  // design; that override exists to show failing rows, and the checklist still fails OSR.
+  const osrCap = ctx.overrides.ignoreSetbacks ? Infinity : osrGfaMax(ctx, F)
   let target = Math.min(ctx.maxGfaM2, heightBoundGfa, osrCap)
   if (osrCap < Math.min(ctx.maxGfaM2, heightBoundGfa) - 1e-6) {
     notes.push(`OSR caps the GFA at ${fmt(osrCap)} m2 for this footprint (open space must be >= ${Math.round(ctx.osrFrac * 100)}% of GFA).`)
@@ -197,7 +251,7 @@ export function podiumTowerTemplate(ctx: TemplateContext): Design | null {
   } else if (towerArea >= TOWER_MIN_AREA_M2) {
     // Aim a little under the exact area so search tolerance x tower floors never exceeds the FAR cap;
     // the search only ever stops at or under the target, so a 0.2% tolerance just under-fills slightly.
-    const shrunk = erodeToArea(ctx.plot, ctx.baseOffsets, Math.max(towerArea - 0.2, 1), Math.max(0.05, 0.002 * towerArea), 8, true)
+    const shrunk = erodeToArea(ctx.plot, ctx.baseOffsets, Math.max(towerArea - 0.2, 1), Math.max(0.05, 0.002 * towerArea), 8, true, ctx.erode)
     tower = shrunk.polygon
   }
   // Width test on the tower polygon itself (erosion of a nearly convex polygon: cheap).
@@ -356,97 +410,41 @@ const TEMPLATES: Record<DesignId, (ctx: TemplateContext) => Design | null> = {
   courtyard: courtyardTemplate,
 }
 
-/**
- * Cuts the plot back to `depthM` from the front-edge line (the strip of the plot within
- * that depth of the road). Returns the cut plot and per-edge offsets: original edges keep
- * their offset, the new rear cut edge gets 0 (so erosion of the cut plot = envelope
- * footprint intersected with the strip). Null when the front edge does not survive.
- */
-function cutPlotToDepth(plot: MetricPolygon, offsets: number[], frontIdx: number, depthM: number): { plot: MetricPolygon; offsets: number[] } | null {
-  const ring = dropClosingPoint(plot[0])
-  const n = ring.length
-  const a = ring[frontIdx]
-  const b = ring[(frontIdx + 1) % n]
-  const len = Math.hypot(b[0] - a[0], b[1] - a[1])
-  if (len === 0) return null
-  const ux = (b[0] - a[0]) / len
-  const uy = (b[1] - a[1]) / len
-  let nx = -uy
-  let ny = ux
-  let cx = 0
-  let cy = 0
-  for (const p of ring) {
-    cx += p[0] / n
-    cy += p[1] / n
-  }
-  if ((cx - a[0]) * nx + (cy - a[1]) * ny < 0) {
-    nx = -nx
-    ny = -ny
-  }
-  const L = ringPerimeter(ring)
-  const strip: MetricPolygon = [
-    [
-      [a[0] - ux * L - nx, a[1] - uy * L - ny],
-      [b[0] + ux * L - nx, b[1] + uy * L - ny],
-      [b[0] + ux * L + nx * depthM, b[1] + uy * L + ny * depthM],
-      [a[0] - ux * L + nx * depthM, a[1] - uy * L + ny * depthM],
-    ],
-  ]
-  let cut: MetricPolygon | null
-  try {
-    cut = largestPiece(polygonIntersection([ring as [number, number][]], strip)).polygon
-  } catch {
-    return null
-  }
-  if (!cut) return null
-  const outer = dropClosingPoint(cut[0]) as [number, number][]
-  const outOffsets: number[] = []
-  let hasFront = false
-  for (let k = 0; k < outer.length; k++) {
-    const p = outer[k]
-    const q = outer[(k + 1) % outer.length]
-    let d = 0
-    for (let i = 0; i < n; i++) {
-      const e0 = ring[i]
-      const e1 = ring[(i + 1) % n]
-      if (pointToSegmentDistance(p, e0, e1) < 1e-4 && pointToSegmentDistance(q, e0, e1) < 1e-4) {
-        d = offsets[i]
-        if (i === frontIdx) hasFront = true
-        break
-      }
-    }
-    outOffsets.push(d)
-  }
-  return hasFront ? { plot: [outer], offsets: outOffsets } : null
-}
-
 interface DesignPlot {
   plot: MetricPolygon
   offsets: number[]
   base: MetricPolygon
   note: string | null
+  /** Storey cap (the ข้อ 52(6) residential exemption) when no footprint fronts the way or keeps the front open space. */
+  floorsCap?: number
+  /** Rear cut-back: designs keep only the part within this depth of the front-edge line. */
+  clip?: DepthClip
 }
 
 /**
- * BMA-BL-2544 ข้อ 53: a building over the exemption height must front the public way, i.e.
- * its road-facing line must exceed 1/8 of its outer perimeter. A deep, narrow envelope fails
- * that, so the designs are built on the plot cut back to the deepest depth from the road at
- * which the footprint still fronts the way (bisection on the depth). If no depth works the
- * uncut envelope is used and the checklist flags it.
+ * BMA-BL-2544 ข้อ 52(6) / 53 for the DEFAULT designs. A building over the exemption must either
+ * front the public way (road-facing line > 1/8 of the perimeter within 20 m) or keep a front
+ * open space (6 m, 12 m above 3 storeys) over >= 1/6 of its perimeter. When the envelope
+ * footprint does neither, candidates are tried and the largest valid footprint wins:
+ *  - cut back from the rear until it fronts the way (bisection on depth);
+ *  - push the front building line to the open-space depth, cutting back from the rear as
+ *    needed so the front edge reaches 1/6 of the perimeter;
+ *  - otherwise the designs are capped at the residential exemption (3 storeys).
  */
-function frontagePlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | null {
+function designPlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | null {
   const metric = pipeline.metric
   const env = pipeline.envelope
   if (!metric || !metric.footprint || !env) return null
   const plain: DesignPlot = { plot: metric.plot, offsets: metric.footprintOffsets, base: [metric.footprint[0]], note: null }
-  if (env.floorsByHeight <= ruleNumber(rules, 'bma-frontage', 'exemptResidentialMaxStoreys')) return plain
+  const fp = frontageParams(rules)
+  const floors = env.floorsByHeight
+  // Applies only above the residential exemption (floors > 3 implies the > 2 storeys trigger).
+  if (!frontageApplies(fp, floors, 0)) return plain
   const ring = dropClosingPoint(metric.plot[0])
   const fi = metric.frontEdgeIndex
   const front: [Position, Position] = [ring[fi], ring[(fi + 1) % ring.length]]
-  const minFraction = ruleNumber(rules, 'bma-frontage', 'frontingLineMinFractionOfPerimeter')
-  const maxDist = ruleNumber(rules, 'bma-frontage', 'frontingLineMaxDistanceFromWayM')
-  const fronts = (poly: MetricPolygon) => isFronting(frontage(poly[0], front, maxDist), minFraction, maxDist)
-  if (fronts(plain.base)) return plain
+  const verdict = (poly: MetricPolygon) => frontageVerdict(poly[0], front, floors, fp)
+  if (verdict(plain.base).pass) return plain
 
   // Depths of the envelope footprint from the front-edge line.
   const [a, b] = front
@@ -462,69 +460,155 @@ function frontagePlot(pipeline: PipelineResult, rules: ZoneRules): DesignPlot | 
   const depths = fr.map(depth)
   const dMin = Math.min(...depths)
   const dMax = Math.max(...depths)
-  const attempt = (D: number): DesignPlot | null => {
-    const cut = cutPlotToDepth(metric.plot, metric.footprintOffsets, fi, D)
-    if (!cut) return null
-    const base = erodeFrom(cut.plot, cut.offsets, 0)
-    if (!base || !fronts(base)) return null
-    return { plot: cut.plot, offsets: cut.offsets, base: [base[0]], note: null }
+  const needDepth = floors > fp.tierStoreys ? fp.frontOpenTallM : fp.frontOpenM
+  const MIN_AREA = 50
+
+  const attempt = (D: number, route: 'fronting' | 'open'): DesignPlot | null => {
+    const offsets = [...metric.footprintOffsets]
+    if (route === 'open') offsets[fi] = Math.max(offsets[fi], needDepth + 0.01)
+    const clip = D >= dMax ? undefined : (makeDepthClip(metric.plot, fi, D) ?? undefined)
+    let base: MetricPolygon | null
+    try {
+      base = erodeFrom(metric.plot, offsets, 0)
+      if (base && clip) base = clipToDepth(base, clip, D)
+    } catch {
+      return null
+    }
+    if (!base || polygonArea(base) < MIN_AREA) return null
+    const v = verdict(base)
+    if (route === 'fronting' ? !v.fronting : !v.openSpaceRoute) return null
+    return { plot: metric.plot, offsets, base: [base[0]], note: null, clip }
   }
-  let lo = dMin + TOWER_MIN_WIDTH_M
-  let best = attempt(lo)
-  if (!best) return plain
-  let hi = dMax
-  for (let i = 0; i < 7 && hi - lo > 0.5; i++) {
-    const mid = (lo + hi) / 2
-    const r = attempt(mid)
-    if (r) {
-      lo = mid
-      best = r
-    } else hi = mid
+  const search = (route: 'fronting' | 'open'): { dp: DesignPlot; D: number } | null => {
+    const full = attempt(dMax + 1, route)
+    if (full) return { dp: full, D: dMax }
+    let lo = Math.max(dMin, route === 'open' ? needDepth : 0) + 4
+    let best = attempt(lo, route)
+    if (!best) return null
+    let hi = dMax
+    for (let i = 0; i < 8 && hi - lo > 0.5; i++) {
+      const mid = (lo + hi) / 2
+      const r = attempt(mid, route)
+      if (r) {
+        lo = mid
+        best = r
+      } else hi = mid
+    }
+    return { dp: best, D: lo }
   }
-  if (polygonArea(best.base) < TOWER_MIN_AREA_M2) return plain
-  best.note = `Cut back to ${fmt(lo, 1)} m from the road so the road-facing building line exceeds 1/${Math.round(1 / minFraction)} of the perimeter (BMA-BL-2544 ข้อ 53); the full-depth envelope would not front the public way.`
-  return best
+  const byFronting = search('fronting')
+  const byOpen = search('open')
+  // Compare by the GFA each option can carry (footprint x floors within the height and GFA caps),
+  // including the 3-storey exempt building on the full envelope footprint.
+  const gfaOf = (areaM2: number, floorsMax: number) => areaM2 * Math.max(0, Math.min(floorsMax, Math.floor(env.gfaCapM2 / Math.max(areaM2, 1e-9) + 1e-9)))
+  const gFront = byFronting ? gfaOf(polygonArea(byFronting.dp.base), env.floorsByHeight) : 0
+  const gOpen = byOpen ? gfaOf(polygonArea(byOpen.dp.base), env.floorsByHeight) : 0
+  const gCapped = gfaOf(polygonArea(plain.base), Math.min(env.floorsByHeight, fp.exemptStoreys))
+  const best = Math.max(gFront, gOpen, gCapped)
+  if (byFronting && gFront === best && gFront > 0) {
+    byFronting.dp.note = `Cut back to ${fmt(byFronting.D, 1)} m from the road so the road-facing building line exceeds 1/${Math.round(1 / fp.minFraction)} of the perimeter (BMA-BL-2544 ข้อ 53); the full-depth envelope would not front the public way.`
+    return byFronting.dp
+  }
+  if (byOpen && gOpen === best && gOpen > 0) {
+    byOpen.dp.note = `Building line held ${needDepth} m back from the road as the ข้อ 52(6) front open space${byOpen.D < dMax ? `, and the block cut back to ${fmt(byOpen.D, 1)} m deep so the road frontage covers 1/${Math.round(1 / fp.openFraction)} of its perimeter` : ''}; the envelope footprint would not front the public way (ข้อ 53).`
+    return byOpen.dp
+  }
+  return {
+    ...plain,
+    floorsCap: fp.exemptStoreys,
+    note: `Capped at ${fp.exemptStoreys} storeys (residential buildings of <= ${fp.exemptStoreys} storeys are exempt from ข้อ 52(6) / 53): ${byFronting || byOpen ? 'this carries more floor area than the largest taller footprint that fronts the public way or keeps' : 'no taller footprint on this plot fronts the public way or keeps'} the ${needDepth} m front open space over 1/${Math.round(1 / fp.openFraction)} of its perimeter.`,
+  }
 }
 
-/** Generates every template for the current envelope; templates that do not apply are skipped. */
-export function generateDesigns(pipeline: PipelineResult, rules: ZoneRules, inputs: PipelineInputs, overrides: DesignOverrideMap = {}): Design[] {
+export interface UnavailableTemplate {
+  id: DesignId
+  name: string
+  reason: string
+}
+
+export interface DesignSet {
+  designs: Design[]
+  /** Templates not offered for this envelope, with a one-line reason for the panel. */
+  unavailable: UnavailableTemplate[]
+}
+
+const TEMPLATE_NAMES: Record<DesignId, string> = { slab: 'Full-envelope slab', podiumTower: 'Tower on podium', courtyard: 'Courtyard block' }
+const NOT_APPLICABLE: Record<DesignId, string> = {
+  slab: 'the envelope has no buildable floor.',
+  podiumTower: `the envelope is too low or too small for a podium plus a tower at least ${TOWER_MIN_WIDTH_M} m wide and ${TOWER_MIN_AREA_M2} m2 within the GFA target.`,
+  courtyard: `needs an envelope footprint over ${COURTYARD_MIN_FOOTPRINT_M2.toLocaleString('en-GB')} m2 with room for a ${COURTYARD_DEPTH_M} m deep block around a court.`,
+}
+
+/** Moves every vertex by under 1 mm (deterministic), to step around a degenerate boolean configuration. */
+function jitter(poly: MetricPolygon, attempt: number): MetricPolygon {
+  return poly.map((ring) => ring.map(([x, y], k) => [x + 0.0007 * Math.sin(attempt * 3.1 + k * 1.7), y + 0.0007 * Math.cos(attempt * 2.3 + k * 1.3)] as [number, number]))
+}
+
+/** Generates every template for the current envelope; templates that do not apply are listed with a reason. */
+export function generateDesignSet(pipeline: PipelineResult, rules: ZoneRules, inputs: PipelineInputs, overrides: DesignOverrideMap = {}): DesignSet {
   const env = pipeline.envelope
   const metric = pipeline.metric
-  if (!pipeline.ok || !env || !metric || !metric.footprint) return []
-  const out: Design[] = []
+  if (!pipeline.ok || !env || !metric || !metric.footprint) return { designs: [], unavailable: [] }
+  const designs: Design[] = []
+  const unavailable: UnavailableTemplate[] = []
   const zeros = dropClosingPoint(metric.plot[0]).map(() => 0)
   let fp: DesignPlot | undefined
   for (const id of ['slab', 'podiumTower', 'courtyard'] as DesignId[]) {
     const ov = overrides[id] ?? {}
-    const dp: DesignPlot = ov.ignoreSetbacks
-      ? { plot: metric.plot, offsets: zeros, base: [metric.plot[0]], note: null }
-      : (fp ??= frontagePlot(pipeline, rules) ?? { plot: metric.plot, offsets: metric.footprintOffsets, base: [metric.footprint[0]], note: null })
-    const base = dp.base
-    const baseOffsets = dp.offsets
-    const ctx: TemplateContext = {
+    let dp: DesignPlot
+    try {
+      dp = ov.ignoreSetbacks
+        ? { plot: metric.plot, offsets: zeros, base: [metric.plot[0]], note: null }
+        : (fp ??= designPlot(pipeline, rules) ?? { plot: metric.plot, offsets: metric.footprintOffsets, base: [metric.footprint[0]], note: null })
+    } catch {
+      dp = fp = { plot: metric.plot, offsets: metric.footprintOffsets, base: [metric.footprint[0]], note: null }
+    }
+    const cap = ov.ignoreSetbacks ? undefined : dp.floorsCap
+    const makeCtx = (plot: MetricPolygon, base: MetricPolygon): TemplateContext => ({
       pipeline,
       rules,
       inputs,
       base,
       baseAreaM2: polygonArea(base),
-      plot: dp.plot,
-      baseOffsets,
+      plot,
+      baseOffsets: dp.offsets,
       plotAreaM2: metric.plotAreaM2,
-      maxFloors: env.maxFloors,
-      floorsByHeight: env.floorsByHeight,
+      maxFloors: cap !== undefined ? Math.min(env.maxFloors, cap) : env.maxFloors,
+      floorsByHeight: cap !== undefined ? Math.min(env.floorsByHeight, cap) : env.floorsByHeight,
       maxGfaM2: env.gfaCapM2,
       osrFrac: rules.zone.osrPercent / 100,
       f2f: inputs.floorToFloorM,
       overrides: ov,
-      erode: cachedEroder(dp.plot, baseOffsets),
+      erode: cachedEroder(plot, dp.offsets, ov.ignoreSetbacks ? undefined : dp.clip),
       frontageNote: dp.note,
+    })
+    let result: Design | null | undefined
+    for (let attempt = 0; attempt < 3 && result === undefined; attempt++) {
+      try {
+        if (attempt === 0) result = TEMPLATES[id](makeCtx(dp.plot, dp.base))
+        else {
+          // polygon-clipping occasionally fails on a degenerate configuration; retry on a plot nudged by < 1 mm.
+          const plot = jitter(dp.plot, attempt)
+          const e = ov.ignoreSetbacks ? plot : erodeFrom(plot, dp.offsets, 0)
+          const base = e && dp.clip && !ov.ignoreSetbacks ? clipToDepth(e, dp.clip, dp.clip.depthM) : e
+          result = base ? TEMPLATES[id](makeCtx(plot, [base[0]])) : null
+        }
+      } catch (err) {
+        if (attempt === 2) console.warn(`[designs] template ${id} failed`, err)
+      }
     }
-    try {
-      const d = TEMPLATES[id](ctx)
-      if (d) out.push(d)
-    } catch (err) {
-      console.warn(`[designs] template ${id} failed`, err)
-    }
+    if (result) designs.push(result)
+    else
+      unavailable.push({
+        id,
+        name: TEMPLATE_NAMES[id],
+        reason: result === undefined ? 'the geometry engine could not build this template for this outline; nudge a vertex.' : NOT_APPLICABLE[id],
+      })
   }
-  return out
+  return { designs, unavailable }
+}
+
+/** Designs only (see `generateDesignSet` for the reasons a template is not offered). */
+export function generateDesigns(pipeline: PipelineResult, rules: ZoneRules, inputs: PipelineInputs, overrides: DesignOverrideMap = {}): Design[] {
+  return generateDesignSet(pipeline, rules, inputs, overrides).designs
 }

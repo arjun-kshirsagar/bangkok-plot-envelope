@@ -12,7 +12,7 @@ export const EXAMPLE_HASH =
 
 /** Worked example from docs/RESEARCH.md: 40 x 40 m plot in ย.10-4 on a 12 m soi, condo. */
 export const WORKED_EXAMPLE_HASH =
-  '#plot=100.5724,13.7363;100.5727699,13.7363;100.5727699,13.73666175;100.5724,13.73666175&front=0&road=12&type=condo'
+  '#plot=100.57240373,13.73630204;100.57277357,13.73629968;100.57277598,13.73666123;100.57240614,13.73666359&front=0&road=12&type=condo'
 
 function loadScene(hash: string, roadDetail: string, roadName: string, camera?: { bearing: number; pitch: number }): void {
   const scene = decodeScene(hash)

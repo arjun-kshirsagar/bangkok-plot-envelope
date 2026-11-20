@@ -4,7 +4,7 @@
 import type { Position } from 'geojson'
 import type { Design } from '../designs/types'
 import { dropClosingPoint, pointToSegmentDistance, ringPerimeter, ringToSegmentDistance, segmentLength } from '../engine/geometry'
-import { frontage as frontageOf, isFronting, type FrontageResult } from '../engine/frontage'
+import { frontage as frontageOf, frontageApplies, frontageParams, frontageVerdict, type FrontageResult } from '../engine/frontage'
 import { polygonArea, polygonIntersectionArea, type MetricPolygon } from '../engine/offset'
 import { boundarySetbackM, type PipelineInputs, type PipelineResult } from '../engine/pipeline'
 import { buildingTypeRules, getRule, ruleNumber } from '../rules/loadRules'
@@ -230,33 +230,34 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
     })
   }
 
-  // 9. BMA frontage (ข้อ 52(6) / 53).
-  const triggerStoreys = ruleNumber(rules, 'bma-frontage', 'triggerStoreys')
-  const triggerHeight = ruleNumber(rules, 'bma-frontage', 'triggerHeightM')
-  const exemptStoreys = ruleNumber(rules, 'bma-frontage', 'exemptResidentialMaxStoreys')
-  const frontageApplies = (design.floors > triggerStoreys || design.heightM > triggerHeight + EPS) && !(design.floors <= exemptStoreys)
-  if (frontageApplies) {
-    const fr = frontage(design.footprint, front, rules)
-    const minFraction = ruleNumber(rules, 'bma-frontage', 'frontingLineMinFractionOfPerimeter')
-    const maxDist = ruleNumber(rules, 'bma-frontage', 'frontingLineMaxDistanceFromWayM')
-    const fronting = isFronting(fr, minFraction, maxDist)
-    const tierStoreys = ruleNumber(rules, 'bma-frontage', 'frontOpenSpaceTierStoreys')
-    const needDepth = design.floors > tierStoreys ? ruleNumber(rules, 'bma-frontage', 'frontOpenSpaceIfGt3StoreysM') : ruleNumber(rules, 'bma-frontage', 'frontOpenSpaceM')
+  // 9. BMA frontage (ข้อ 52(6) / 53): fronting the public way, or the front open-space alternative.
+  const fp = frontageParams(rules)
+  if (frontageApplies(fp, design.floors, design.heightM)) {
+    const v = frontageVerdict(design.footprint[0], front, design.floors, fp)
+    const fr = v.fr
     rows.push({
       ruleId: 'bma-frontage',
       label: 'Fronting the public way',
-      requirement: `Road-facing building line > 1/8 of the outer perimeter and <= ${maxDist} m from the public way; otherwise a ${needDepth} m front open space over 1/6 of the perimeter plus a 6 m internal road is needed (not modelled).`,
-      actual: `line ${m(fr.lineM, 1)} of ${m(fr.perimeterM, 1)} perimeter, ${m(fr.distanceM, 1)} from the road`,
-      allowed: `line > ${m(minFraction * fr.perimeterM, 1)}, distance <= ${maxDist} m`,
-      pass: fronting,
+      requirement: `Road-facing building line > 1/${Math.round(1 / fp.minFraction)} of the outer perimeter and <= ${fp.maxDistM} m from the public way (ข้อ 53); otherwise a ${v.needDepthM} m front open space over >= 1/${Math.round(1 / fp.openFraction)} of the perimeter (ข้อ 52(6)).`,
+      actual: v.fronting || !v.openSpaceRoute
+        ? `line ${m(fr.lineM, 1)} of ${m(fr.perimeterM, 1)} perimeter, ${m(fr.distanceM, 1)} from the road`
+        : `front open space ${m(fr.distanceM, 1)} deep, ${m(v.frontEdgeM, 1)} wide (perimeter ${m(fr.perimeterM, 1)})`,
+      allowed: v.fronting || !v.openSpaceRoute
+        ? `line > ${m(fp.minFraction * fr.perimeterM, 1)}, distance <= ${fp.maxDistM} m; or open space >= ${v.needDepthM} m deep`
+        : `>= ${v.needDepthM} m deep, >= ${m(fp.openFraction * fr.perimeterM, 1)} wide`,
+      pass: v.pass,
       source: src('bma-frontage'),
-      note: fronting ? undefined : `Not fronting the public way: the ${needDepth} m front open space / internal road route is flagged, not verified.`,
+      note: v.fronting
+        ? undefined
+        : v.openSpaceRoute
+          ? `Not fronting the public way; passes by the ข้อ 52(6) route: the ${v.needDepthM} m front open space adjoins the road along the whole front edge.`
+          : `Neither fronting the public way (ข้อ 53) nor keeping a ${v.needDepthM} m front open space over 1/${Math.round(1 / fp.openFraction)} of the perimeter (ข้อ 52(6)).`,
     })
   } else {
     rows.push({
       ruleId: 'bma-frontage',
       label: 'Fronting the public way',
-      requirement: `Applies to buildings > ${triggerStoreys} storeys or > ${triggerHeight} m; residential <= ${exemptStoreys} storeys exempt.`,
+      requirement: `Applies to buildings > ${fp.triggerStoreys} storeys or > ${fp.triggerHeightM} m; residential <= ${fp.exemptStoreys} storeys exempt.`,
       actual: `${design.floors} floors, ${m(design.heightM, 1)}`,
       allowed: 'exempt',
       pass: true,

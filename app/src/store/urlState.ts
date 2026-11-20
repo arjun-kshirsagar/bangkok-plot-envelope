@@ -38,7 +38,8 @@ export function inBangkok(lng: number, lat: number): boolean {
   return lng >= BANGKOK_BBOX.west && lng <= BANGKOK_BBOX.east && lat >= BANGKOK_BBOX.south && lat <= BANGKOK_BBOX.north
 }
 
-const COORD_DECIMALS = 7
+// 8 decimals = ~1 mm, so a re-encoded link reproduces areas to well under 1 m2.
+const COORD_DECIMALS = 8
 
 function fmt(n: number, decimals: number): string {
   return Number(n.toFixed(decimals)).toString()

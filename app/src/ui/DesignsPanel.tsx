@@ -1,5 +1,5 @@
 import { OVERRIDE_EXTRA_FLOORS, type DesignId } from '../designs/types'
-import { useAppStore, usePipelineResult, type DesignWithChecks } from '../store'
+import { selectUnavailableTemplates, useAppStore, usePipelineResult, type DesignWithChecks } from '../store'
 import { useSelectedDesign } from './useSelectedDesign'
 
 const n0 = (v: number) => Math.round(v).toLocaleString('en-GB')
@@ -35,24 +35,45 @@ export function DesignsPanel() {
   const overrides = useAppStore((s) => s.designOverrides)
   const setOverride = useAppStore((s) => s.setDesignOverride)
   const resetOverrides = useAppStore((s) => s.resetDesignOverrides)
+  const settling = useAppStore((s) => s.plotSettling)
 
   if (!pipeline.ok || !pipeline.envelope) {
     return <p className="muted">Concept designs appear once the envelope exists.</p>
   }
-  if (!selected) return <p className="muted">No template fits this envelope.</p>
+  const unavailable = selectUnavailableTemplates(useAppStore.getState(), pipeline)
+  const unavailableList =
+    unavailable.length > 0 ? (
+      <ul className="design-notes muted">
+        {unavailable.map((u) => (
+          <li key={u.id}>
+            {u.name} not offered: {u.reason}
+          </li>
+        ))}
+      </ul>
+    ) : null
+  if (!selected)
+    return (
+      <>
+        <p className="muted">No template fits this envelope.</p>
+        {unavailableList}
+      </>
+    )
 
   const { design } = selected
   const ov = overrides[design.id] ?? {}
-  const maxSlider = pipeline.envelope.maxFloors + OVERRIDE_EXTRA_FLOORS
+  // Cover a larger override restored from a link, so the thumb is never clamped below the value.
+  const maxSlider = Math.max(pipeline.envelope.maxFloors + OVERRIDE_EXTRA_FLOORS, ov.floors ?? 0, design.floors)
   const hasOverride = ov.floors !== undefined || ov.ignoreSetbacks
 
   return (
     <div className="designs">
+      {settling && <p className="hint">Envelope follows the drag; designs and checks update when you let go.</p>}
       <div className="design-cards">
         {designs.map((item) => (
           <DesignCard key={item.design.id} item={item} selected={item.design.id === selected.design.id} onSelect={() => selectDesign(item.design.id as DesignId)} />
         ))}
       </div>
+      {unavailableList}
 
       <p className="hint">{design.description}</p>
       <ul className="design-notes">

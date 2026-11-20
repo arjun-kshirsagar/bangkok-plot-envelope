@@ -6,6 +6,7 @@
 import { create } from 'zustand'
 import type { LngLatBoundsLike, Map as MapLibreMap } from 'maplibre-gl'
 import type { Polygon } from 'geojson'
+import { ZONE_BBOX } from '../rules'
 
 interface MapStatusState {
   map: MapLibreMap | null
@@ -69,4 +70,33 @@ export function trackTileLoading(map: MapLibreMap): () => void {
     map.off('dataloading', update)
     map.off('idle', onIdle)
   }
+}
+
+/** ~1.5 km of padding around the Y.10 sub-zones (at 13.7 N, 1 deg lng ~ 108 km, 1 deg lat ~ 110.6 km). */
+const BOUNDS_PAD_LNG = 1.5 / 108
+const BOUNDS_PAD_LAT = 1.5 / 110.6
+
+export const MAP_MAX_BOUNDS: [[number, number], [number, number]] = [
+  [ZONE_BBOX[0] - BOUNDS_PAD_LNG, ZONE_BBOX[1] - BOUNDS_PAD_LAT],
+  [ZONE_BBOX[2] + BOUNDS_PAD_LNG, ZONE_BBOX[3] + BOUNDS_PAD_LAT],
+]
+
+/** True when no vertex of the plot lies inside the camera bounds (e.g. a plot restored from a foreign link). */
+export function plotOutsideMaxBounds(plot: Polygon | null): boolean {
+  if (!plot) return false
+  const [[w, s], [e, n]] = MAP_MAX_BOUNDS
+  return plot.coordinates[0].every(([x, y]) => x < w || x > e || y < s || y > n)
+}
+
+/** Lifts the camera bounds and frames the plot; the bounds come back when the plot is deleted. */
+export function goToPlotOutsideBounds(plot: Polygon | null): void {
+  const map = useMapStatus.getState().map
+  if (!map || !plot) return
+  map.setMaxBounds(null)
+  fitToPlot(plot)
+}
+
+export function restoreMaxBounds(): void {
+  const map = useMapStatus.getState().map
+  if (map && !map.getMaxBounds()) map.setMaxBounds(MAP_MAX_BOUNDS)
 }

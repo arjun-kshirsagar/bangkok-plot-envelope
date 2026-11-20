@@ -114,3 +114,15 @@ describe('frontage building line (ข้อ 53)', () => {
     }
   })
 })
+
+describe('ignore-setbacks override on the tower-on-podium', () => {
+  it('does not collapse to a 400 m2 x 1 floor tower (OSR cap skipped) and still fails OSR', () => {
+    const inp = inputs(rect(40, 40))
+    const pipeline = runPipeline(inp, ZONE_RULES)
+    const pt = generateDesigns(pipeline, ZONE_RULES, inp, { podiumTower: { ignoreSetbacks: true } }).find((d) => d.id === 'podiumTower')!
+    expect(pt.blocks[0].floors).toBe(2)
+    expect(pt.blocks[1].floors).toBeGreaterThan(1)
+    const failing = evaluateChecks(pt, pipeline, ZONE_RULES, inp).rows.filter((r) => !r.pass).map((r) => r.ruleId)
+    expect(failing).toContain('zone-osr')
+  })
+})

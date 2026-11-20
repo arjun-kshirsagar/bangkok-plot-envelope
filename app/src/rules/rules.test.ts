@@ -1,25 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { ZONE_RULES, getRule, ruleNumber } from './loadRules'
 import { ZONE_BBOX, ZONE_SUBZONES, findSubzone, thaiDigitsToLatin } from './zone'
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url))
 
+// In an app-only checkout (e.g. Vercel with root directory app/) the repo-root files are absent: skip those comparisons.
+const hasRoot = (p: string) => existsSync(here(p))
+
 describe('rules files', () => {
-  it('app copy of bangkok-zone.json is byte-identical to the repo-root copy', () => {
+  it.skipIf(!hasRoot('../../../rules/bangkok-zone.json'))('app copy of bangkok-zone.json is byte-identical to the repo-root copy', () => {
     const app = readFileSync(here('./bangkok-zone.json'))
     const root = readFileSync(here('../../../rules/bangkok-zone.json'))
     expect(app.equals(root)).toBe(true)
   })
 
-  it('app copy of docs/SOURCES.md (shown in the sources modal) is byte-identical to the repo-root copy', () => {
+  it.skipIf(!hasRoot('../../../docs/SOURCES.md'))('app copy of docs/SOURCES.md (shown in the sources modal) is byte-identical to the repo-root copy', () => {
     const app = readFileSync(here('./SOURCES.md'))
     const root = readFileSync(here('../../../docs/SOURCES.md'))
     expect(app.equals(root)).toBe(true)
   })
 
-  it('app copy of bangkok-zone-y10 (.json, Vite cannot import .geojson) is byte-identical to the repo-root .geojson', () => {
+  it.skipIf(!hasRoot('../../../rules/bangkok-zone-y10.geojson'))('app copy of bangkok-zone-y10 (.json, Vite cannot import .geojson) is byte-identical to the repo-root .geojson', () => {
     const app = readFileSync(here('./bangkok-zone-y10.json'))
     const root = readFileSync(here('../../../rules/bangkok-zone-y10.geojson'))
     expect(app.equals(root)).toBe(true)

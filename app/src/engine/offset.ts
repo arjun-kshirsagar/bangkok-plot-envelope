@@ -171,7 +171,7 @@ export function erodePolygon(poly: MetricPolygon, distances: number | number[], 
   const localOuter = local[0]
 
   // A vertex needs a circle only where the two strips do not already cover the corner:
-  // reflex (inward-turning) and collinear vertices. At convex corners the strips are
+  // reflex (inward-turning) and collinear vertices, and corners between unequal distances. At convex corners the strips are
   // extended a hair past the vertex instead, which keeps their end sides from crossing
   // exactly at the vertex.
   const orientation = Math.sign(signedRingArea(localOuter)) || 1
@@ -184,7 +184,9 @@ export function erodePolygon(poly: MetricPolygon, distances: number | number[], 
     const lenA = Math.hypot(v[0] - p[0], v[1] - p[1])
     const lenB = Math.hypot(q[0] - v[0], q[1] - v[1])
     const sinTurn = lenA > 0 && lenB > 0 ? cross / (lenA * lenB) : 0
-    needsCircle[i] = sinTurn * orientation < 1e-3
+    // At a convex corner the two strips cover every point within d of the vertex only when both
+    // adjacent distances are equal; with unequal ones the larger disc pokes past the smaller strip.
+    needsCircle[i] = sinTurn * orientation < 1e-3 || Math.abs(ds[(i - 1 + n) % n] - ds[i]) > 1e-9
   }
 
   let lastError: unknown = null
@@ -241,6 +243,8 @@ export function erodeToArea(
   toleranceM2 = 0.5,
   maxIterations = 15,
   incremental = false,
+  /** Custom erosion at extra offset s (e.g. a memoised or clipped one); defaults to eroding `source`. */
+  eroder?: (s: number) => MetricPolygon | null,
 ): ErodeToAreaResult {
   const n = dropClosingPoint(source[0]).length
   const base = typeof baseDistances === 'number' ? new Array<number>(n).fill(baseDistances) : baseDistances
@@ -251,7 +255,9 @@ export function erodeToArea(
     const r =
       incremental && loPoly && loS > 0 && s > loS
         ? erodePolygon([loPoly[0]], s - loS, { withRemoved: false })
-        : erodePolygon(source, base.map((d) => d + s), { withRemoved: false })
+        : eroder
+          ? { polygon: eroder(s) }
+          : erodePolygon(source, base.map((d) => d + s), { withRemoved: false })
     return { polygon: r.polygon, area: r.polygon ? polygonArea(r.polygon) : 0 }
   }
   const raiseLo = (s: number, poly: MetricPolygon | null) => {

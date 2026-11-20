@@ -118,22 +118,30 @@ describe('courtyard template', () => {
 })
 
 describe('frontage check', () => {
-  it('fails a design pushed more than 20 m back from the road', () => {
-    // 40 x 80 m plot, 12 m road on the short south edge. Slab fronts the road and passes;
-    // a courtyard-free deep footprint is simulated by shifting the slab footprint 30 m back.
+  it('a footprint deep in the plot passes by the ข้อ 52(6) front open space only when the road frontage is wide enough', () => {
+    // 40 x 80 m plot, 12 m road on the short south edge: the slab shifted 30 m back is not fronting,
+    // but keeps > 12 m of open space along a 40 m frontage (>= 1/6 of its perimeter).
     const deep = metricPlot([[0, 0], [40, 0], [40, 80], [0, 80]])
     const inp = inputs(deep)
     const { pipeline, designs } = run(inp)
     const slab = designs.find((d) => d.id === 'slab')!
-    const [x0] = toMetric(ORIGIN)
-    void x0
-    const shifted = { ...slab, footprint: [slab.footprint[0].map(([x, y]) => [x, y + 30] as [number, number])] }
-    const c = evaluateChecks(shifted, pipeline, ZONE_RULES, inp)
-    const row = c.rows.find((r) => r.ruleId === 'bma-frontage')!
-    expect(row.pass).toBe(false)
-    expect(row.actual).toMatch(/from the road/)
     const ok = evaluateChecks(slab, pipeline, ZONE_RULES, inp).rows.find((r) => r.ruleId === 'bma-frontage')!
     expect(ok.pass).toBe(true)
+    const shifted = { ...slab, floors: 12, heightM: 36, footprint: [slab.footprint[0].map(([x, y]) => [x, y + 30] as [number, number])] }
+    const viaOpen = evaluateChecks(shifted, pipeline, ZONE_RULES, inp).rows.find((r) => r.ruleId === 'bma-frontage')!
+    expect(viaOpen.pass).toBe(true)
+    expect(viaOpen.note).toMatch(/52\(6\)/)
+
+    // 15 x 80 m plot on the short edge: a 9 x 40 m block 25 m back neither fronts (> 20 m) nor has
+    // a frontage of 1/6 of its 98 m perimeter (15 m < 16.3 m).
+    const narrow = metricPlot([[0, 0], [15, 0], [15, 80], [0, 80]])
+    const inp2 = inputs(narrow)
+    const p2 = runPipeline(inp2, ZONE_RULES)
+    const [x0, y0] = toMetric(ORIGIN)
+    const block = { ...slab, floors: 12, heightM: 36, footprint: [[[x0 + 3, y0 + 25], [x0 + 12, y0 + 25], [x0 + 12, y0 + 65], [x0 + 3, y0 + 65]] as [number, number][]] }
+    const bad = evaluateChecks(block, p2, ZONE_RULES, inp2).rows.find((r) => r.ruleId === 'bma-frontage')!
+    expect(bad.pass).toBe(false)
+    expect(bad.note).toMatch(/Neither/)
   })
 })
 

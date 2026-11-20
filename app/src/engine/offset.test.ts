@@ -153,3 +153,20 @@ describe('erodeToArea', () => {
     expect(erodeToArea(RECT, 0, 2000).offsetM).toBe(0)
   })
 })
+
+describe('erodePolygon with unequal adjacent distances', () => {
+  it('keeps every footprint vertex >= d_i from edge i at obtuse convex corners', () => {
+    // C-ish hexagon with obtuse corners; front edge 0 gets a small offset, the rest a larger one.
+    const ring: MetricRing = [[0, 0], [60, 0], [80, 25], [60, 50], [0, 50], [-15, 25]]
+    for (const ds of [[1.2, 3, 3, 3, 3, 3], [5.9, 2, 6, 2, 6, 2], [0.5, 6, 6, 6, 6, 6]]) {
+      const r = erodePolygon([ring], ds)
+      expect(r.polygon).not.toBeNull()
+      for (const p of r.polygon![0]) {
+        ring.forEach((a, i) => {
+          const b = ring[(i + 1) % ring.length]
+          expect(pointToSegmentDistance(p, a, b), `edge ${i} ds ${ds}`).toBeGreaterThanOrEqual(ds[i] - 1e-6)
+        })
+      }
+    }
+  })
+})

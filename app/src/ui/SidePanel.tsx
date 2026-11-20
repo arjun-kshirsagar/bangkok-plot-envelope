@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { STAGE_IDS, type StageId } from '../engine/pipeline'
 import { MAX_PLOT_VERTICES } from '../engine/plot'
 import { BUILDING_TYPES, ZONE_RULES, isBuildingType } from '../rules'
-import { fitToPlot } from '../map/mapStatus'
+import { fitToPlot, goToPlotOutsideBounds, plotOutsideMaxBounds } from '../map/mapStatus'
 import {
   FLOOR_TO_FLOOR_RANGE,
   useAppStore,
@@ -234,7 +234,16 @@ export function SidePanel() {
           </p>
         )}
         {zone?.outsideMapArea && (
-          <p className="warn">Part of the plot lies outside the mapped Y.10 area. Only Y.10 rules are modelled, so treat the result as indicative for this location.</p>
+          <p className="warn">
+            {plotOutsideMaxBounds(plot)
+              ? 'This plot lies entirely outside the map area around Y.10 (it probably came from a link). Only Y.10 rules are modelled, so treat the result as indicative. '
+              : 'Part of the plot lies outside the mapped Y.10 area. Only Y.10 rules are modelled, so treat the result as indicative for this location.'}
+            {plotOutsideMaxBounds(plot) && (
+              <button type="button" className="link inline" onClick={() => goToPlotOutsideBounds(plot)}>
+                Go to plot
+              </button>
+            )}
+          </p>
         )}
       </section>
 

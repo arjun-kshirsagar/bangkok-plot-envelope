@@ -13,6 +13,7 @@ import {
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter'
 import type { InteractionMode } from '../store/types'
 import { MAX_PLOT_VERTICES } from '../engine/plot'
+import { segmentsIntersect } from '../engine/geometry'
 
 export const PLOT_FILL_COLOR = '#2dd4bf'
 export const PLOT_OUTLINE_COLOR = '#0d9488'
@@ -24,8 +25,23 @@ export interface DrawHandlers {
   onDrawFinished: () => void
   /** Fired when the user deletes the plot inside Terra Draw (Delete key). */
   onPlotDeleted: () => void
+  /** Fired when a vertex drag (or other edit) ends, so deferred work can run at once. */
+  onEditFinished?: () => void
   /** Fired when Terra Draw's validation result changes: a user-facing reason, or null when valid again. */
   onValidation?: (message: string | null) => void
+}
+
+/** Open polyline (ring without its closing edge) has no two non-adjacent segments crossing. */
+function openPolylineValid(feature: GeoJSONStoreFeatures): { valid: boolean; reason?: string } {
+  if (feature.geometry.type !== 'Polygon') return { valid: true }
+  const ring = feature.geometry.coordinates[0]
+  const pts = ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1] ? ring.slice(0, -1) : ring
+  for (let i = 0; i + 1 < pts.length; i++) {
+    for (let j = i + 2; j + 1 < pts.length; j++) {
+      if (segmentsIntersect(pts[i], pts[i + 1], pts[j], pts[j + 1])) return { valid: false, reason: 'Self-intersecting' }
+    }
+  }
+  return { valid: true }
 }
 
 /** Plain-language version of a Terra Draw validation failure. */
@@ -59,8 +75,11 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
     modes: [
       new TerraDrawPolygonMode({
         // While drawing, the ring carries the provisional cursor vertex as well, hence +1.
-        validation: (feature) => {
-          const v = ValidateNotSelfIntersecting(feature)
+        // While drawing, the ring Terra Draw validates is closed back to the first vertex; that
+        // temporary closing edge often crosses a C- or L-shape drawn in natural order. Only the
+        // open polyline is checked until the user finishes; the closed ring is checked on finish.
+        validation: (feature, context) => {
+          const v = context.updateType === 'finish' ? ValidateNotSelfIntersecting(feature) : openPolylineValid(feature)
           if (!v.valid) return report(v, true)
           const n = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0].length - 1 : 0
           return report(n <= MAX_PLOT_VERTICES + 1 ? { valid: true } : { valid: false, reason: `Maximum ${MAX_PLOT_VERTICES} vertices` }, true)
@@ -89,7 +108,9 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
               draggable: false,
               rotateable: false,
               scaleable: false,
-              selfIntersectable: false,
+              // true: let our validation (below) reject crossing drags so the panel can say why;
+          // with false Terra Draw refuses them silently before custom validation runs.
+          selfIntersectable: true,
               coordinates: {
                 midpoints: true,
                 draggable: true,
@@ -151,7 +172,10 @@ export function createDrawController(map: MapLibreMap, handlers: DrawHandlers): 
   })
 
   draw.on('finish', (id, context) => {
-    if (context.mode !== 'polygon' || context.action !== 'draw') return
+    if (context.mode !== 'polygon' || context.action !== 'draw') {
+      handlers.onEditFinished?.()
+      return
+    }
     // One plot at a time: drop any other polygon.
     const others = draw
       .getSnapshot()

@@ -1,10 +1,9 @@
 import { useEffect, useRef } from 'react'
 import maplibregl from 'maplibre-gl'
-import type { LngLatBoundsLike, MapMouseEvent } from 'maplibre-gl'
+import type { MapMouseEvent } from 'maplibre-gl'
 import type { Polygon } from 'geojson'
 import { nearestEdge, plotEdges } from '../engine/plot'
 import type { LngLat } from '../engine/projection'
-import { ZONE_BBOX } from '../rules'
 import { selectPipeline, selectSelectedDesign, useAppStore } from '../store'
 import { DEFAULT_ROAD_WIDTH_M } from '../store/useAppStore'
 import { startBuildingHeightCheck } from './buildings'
@@ -14,18 +13,11 @@ import { ensureBuildings3D, firstSymbolLayerId, INITIAL_VIEW, metresPerPixel, ST
 import { buildDesignLayers, buildPipelineLayers, createOverlay } from './overlay'
 import { resolveRoadWidth } from './roads'
 import { addZoneLayers } from './zoneLayer'
-import { fitToPlot, trackTileLoading, useMapStatus } from './mapStatus'
+import { fitToPlot, MAP_MAX_BOUNDS, restoreMaxBounds, trackTileLoading, useMapStatus } from './mapStatus'
+
+export { MAP_MAX_BOUNDS }
 
 const PICK_TOLERANCE_PX = 16
-/** ~1.5 km of padding around the Y.10 sub-zones (at 13.7 N, 1 deg lng ~ 108 km, 1 deg lat ~ 110.6 km). */
-const BOUNDS_PAD_LNG = 1.5 / 108
-const BOUNDS_PAD_LAT = 1.5 / 110.6
-
-export const MAP_MAX_BOUNDS: LngLatBoundsLike = [
-  [ZONE_BBOX[0] - BOUNDS_PAD_LNG, ZONE_BBOX[1] - BOUNDS_PAD_LAT],
-  [ZONE_BBOX[2] + BOUNDS_PAD_LNG, ZONE_BBOX[3] + BOUNDS_PAD_LAT],
-]
-
 export function MapView() {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -95,12 +87,29 @@ export function MapView() {
       // Plots set from outside Terra Draw (example loader, link) are pushed back into it; the
       // ones Terra Draw itself produced are remembered so dragging never re-loads the feature.
       let lastDrawPlot: Polygon | null = null
+      // While a vertex is dragged only the envelope follows the pointer; designs + checks run on
+      // pointer-up (Terra Draw 'finish') or after 150 ms without movement.
+      let settleTimer: ReturnType<typeof setTimeout> | null = null
+      const settle = () => {
+        if (settleTimer !== null) clearTimeout(settleTimer)
+        settleTimer = null
+        if (store.getState().plotSettling) store.getState().setPlotSettling(false)
+      }
+      cleanups.push(() => {
+        if (settleTimer !== null) clearTimeout(settleTimer)
+      })
       const draw = createDrawController(map, {
         onPlotChange: (plot) => {
           lastDrawPlot = plot
-          store.getState().setPlot(plot)
+          const st = store.getState()
+          if (!st.plotSettling) st.setPlotSettling(true)
+          st.setPlot(plot)
+          if (settleTimer !== null) clearTimeout(settleTimer)
+          settleTimer = setTimeout(settle, 150)
         },
+        onEditFinished: settle,
         onDrawFinished: () => {
+          settle()
           store.getState().setMode('edit')
           fitToPlot(store.getState().plot)
         },
@@ -129,8 +138,8 @@ export function MapView() {
         overlay.setProps({
           layers: [
             // The opaque design goes first so the faded envelope (no depth writes) blends over it.
-            ...buildDesignLayers(selected?.design ?? null, { beforeId }),
-            ...buildPipelineLayers(pipeline, s.stageVisibility, { beforeId, envelopeFaded: selected !== null }),
+            ...buildDesignLayers(s.plotSettling ? null : (selected?.design ?? null), { beforeId }),
+            ...buildPipelineLayers(pipeline, s.stageVisibility, { beforeId, envelopeFaded: selected !== null && !s.plotSettling }),
           ],
         })
       }
@@ -157,7 +166,10 @@ export function MapView() {
             if (state.mode !== 'pickFront') edges.setHover(null)
             setCursorClasses(state.mode === 'pickFront', false)
           }
-          if (state.plot !== prev.plot && state.plot === null) draw.clear()
+          if (state.plot !== prev.plot && state.plot === null) {
+            draw.clear()
+            restoreMaxBounds()
+          }
           if (state.plot !== prev.plot && state.plot !== null && state.plot !== lastDrawPlot) {
             lastDrawPlot = state.plot
             draw.loadPlot(state.plot)
@@ -171,7 +183,8 @@ export function MapView() {
             state.floorToFloorM !== prev.floorToFloorM ||
             state.stageVisibility !== prev.stageVisibility ||
             state.selectedDesignId !== prev.selectedDesignId ||
-            state.designOverrides !== prev.designOverrides
+            state.designOverrides !== prev.designOverrides ||
+            state.plotSettling !== prev.plotSettling
           ) {
             scheduleOverlay()
           }

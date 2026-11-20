@@ -37,6 +37,11 @@ export interface AppState extends SceneInputs {
   stageVisibility: StageVisibility
   selectedDesignId: DesignId
   designOverrides: DesignOverrideMap
+  /**
+   * True while the plot is being dragged / drawn (cleared on pointer-up or after 150 ms idle).
+   * Only the envelope is recomputed meanwhile; designs and checks wait. Not in the URL.
+   */
+  plotSettling: boolean
   /** Last drawing-tool validation message (self-intersection, vertex cap), null when valid. Not in the URL. */
   drawNotice: string | null
 
@@ -55,6 +60,7 @@ export interface AppState extends SceneInputs {
   setDesignOverride: (id: DesignId, patch: DesignOverrides) => void
   resetDesignOverrides: (id?: DesignId) => void
   setDrawNotice: (notice: string | null) => void
+  setPlotSettling: (settling: boolean) => void
   hydrate: (scene: Partial<SceneInputs> & { roadWidthSource?: RoadWidthSource; view?: MapView | null; selectedDesignId?: DesignId; designOverrides?: DesignOverrideMap }) => void
 }
 
@@ -81,6 +87,7 @@ export const useAppStore = create<AppState>()((set) => ({
   selectedDesignId: 'slab',
   designOverrides: {},
   drawNotice: null,
+  plotSettling: false,
 
   setPlot: (plot) =>
     set((state) => ({
@@ -128,6 +135,8 @@ export const useAppStore = create<AppState>()((set) => ({
     }),
 
   setDrawNotice: (drawNotice) => set({ drawNotice }),
+
+  setPlotSettling: (plotSettling) => set({ plotSettling }),
 
   hydrate: (scene) => set((state) => ({ ...state, ...scene })),
 }))

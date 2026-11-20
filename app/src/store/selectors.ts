@@ -8,7 +8,7 @@ import { plotAreaM2, plotEdges, outerRing, validatePlot, type PlotEdge, type Plo
 import { EMPTY_PIPELINE_RESULT, runPipeline, type PipelineResult } from '../engine/pipeline'
 import { ringToMetric, toWgs84, type LngLat } from '../engine/projection'
 import { ZONE_BBOX, ZONE_RULES, findSubzone, type SubzoneProps } from '../rules'
-import { generateDesigns } from '../designs/templates'
+import { generateDesignSet, type UnavailableTemplate } from '../designs/templates'
 import type { Design } from '../designs/types'
 import { evaluateChecks } from '../checks/evaluate'
 import type { ChecklistResult } from '../checks/types'
@@ -123,21 +123,35 @@ export interface DesignWithChecks {
   checks: ChecklistResult
 }
 
-let designsCache: { pipeline: PipelineResult; overrides: AppState['designOverrides']; result: DesignWithChecks[] } | null = null
+let designsCache: { pipeline: PipelineResult; overrides: AppState['designOverrides']; result: DesignWithChecks[]; unavailable: UnavailableTemplate[] } | null = null
 
-/** All concept designs for the current envelope, each with its checklist (shared cache). */
-export function selectDesigns(state: AppState, pipeline: PipelineResult = selectPipeline(state)): DesignWithChecks[] {
-  if (designsCache && designsCache.pipeline === pipeline && designsCache.overrides === state.designOverrides) return designsCache.result
+function computeDesigns(state: AppState, pipeline: PipelineResult) {
+  if (designsCache && designsCache.pipeline === pipeline && designsCache.overrides === state.designOverrides) return designsCache
+  // Mid-drag: keep the last designs (the map hides them) instead of paying for designs + checks per move.
+  if (state.plotSettling && designsCache) return designsCache
   let result: DesignWithChecks[] = []
+  let unavailable: UnavailableTemplate[] = []
   if (pipeline.ok) {
     const inputs = pipelineInputs(state)
-    result = generateDesigns(pipeline, ZONE_RULES, inputs, state.designOverrides).map((design) => ({
+    const set = generateDesignSet(pipeline, ZONE_RULES, inputs, state.designOverrides)
+    unavailable = set.unavailable
+    result = set.designs.map((design) => ({
       design,
       checks: evaluateChecks(design, pipeline, ZONE_RULES, inputs),
     }))
   }
-  designsCache = { pipeline, overrides: state.designOverrides, result }
-  return result
+  designsCache = { pipeline, overrides: state.designOverrides, result, unavailable }
+  return designsCache
+}
+
+/** All concept designs for the current envelope, each with its checklist (shared cache). */
+export function selectDesigns(state: AppState, pipeline: PipelineResult = selectPipeline(state)): DesignWithChecks[] {
+  return computeDesigns(state, pipeline).result
+}
+
+/** Templates not offered for the current envelope, with the reason (same cache as the designs). */
+export function selectUnavailableTemplates(state: AppState, pipeline: PipelineResult = selectPipeline(state)): UnavailableTemplate[] {
+  return computeDesigns(state, pipeline).unavailable
 }
 
 export function selectSelectedDesign(state: AppState, pipeline?: PipelineResult): DesignWithChecks | null {
@@ -153,8 +167,9 @@ export function useDesigns(): DesignWithChecks[] {
   const buildingType = useAppStore((s) => s.buildingType)
   const floorToFloorM = useAppStore((s) => s.floorToFloorM)
   const designOverrides = useAppStore((s) => s.designOverrides)
+  const plotSettling = useAppStore((s) => s.plotSettling)
   return useMemo(
-    () => selectDesigns({ plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM, designOverrides } as AppState, pipeline),
-    [pipeline, plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM, designOverrides],
+    () => selectDesigns({ plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM, designOverrides, plotSettling } as AppState, pipeline),
+    [pipeline, plot, frontEdgeIndex, roadWidthM, buildingType, floorToFloorM, designOverrides, plotSettling],
   )
 }
