@@ -391,6 +391,8 @@ export function courtyardTemplate(ctx: TemplateContext): Design | null {
   const ring: MetricPolygon = [ctx.base[0], inner[0]]
   const ringArea = polygonArea(ring)
   if (ringArea < 1) return null
+  // One floor of the ring already exceeds the envelope's GFA cap: no compliant courtyard exists.
+  if (ringArea > ctx.maxGfaM2 + 1e-6) return null
   const needed = Math.ceil((COURTYARD_GFA_TARGET_FRACTION * ctx.maxGfaM2) / ringArea - 1e-9)
   const byOsr = Math.floor(osrGfaMax(ctx, ringArea) / ringArea + 1e-9)
   const defaultFloors = Math.max(1, Math.min(ctx.maxFloors, needed, byOsr))
@@ -584,7 +586,7 @@ const TEMPLATE_NAMES: Record<DesignId, string> = { slab: 'Full-envelope slab', p
 const NOT_APPLICABLE: Record<DesignId, string> = {
   slab: 'the envelope has no buildable floor.',
   podiumTower: `the envelope is too low or too small for a podium plus a tower at least ${TOWER_MIN_WIDTH_M} m wide and ${TOWER_MIN_AREA_M2} m² within the GFA target.`,
-  courtyard: `needs an envelope footprint over ${COURTYARD_MIN_FOOTPRINT_M2.toLocaleString('en-GB')} m² with room for a ${COURTYARD_DEPTH_M} m deep block around a court.`,
+  courtyard: `needs an envelope footprint over ${COURTYARD_MIN_FOOTPRINT_M2.toLocaleString('en-GB')} m² with room for a ${COURTYARD_DEPTH_M} m deep block around a court, one floor of which fits the GFA cap.`,
 }
 
 /** Moves every vertex by under 1 mm (deterministic), to step around a degenerate boolean configuration. */

@@ -115,6 +115,14 @@ describe('courtyard template', () => {
     expect(polygonArea(court.blocks[0].footprint)).toBeCloseTo(court.footprintAreaM2, 6)
     expect(checks[designs.indexOf(court)].pass).toBe(true)
   })
+
+  it('is not offered when one floor of the ring already exceeds the GFA cap (600 x 100 m, 6 m road)', () => {
+    const inp = inputs(metricPlot([[0, 0], [600, 0], [600, 100], [0, 100]]), { roadWidthM: 6 })
+    const { pipeline, designs, checks } = run(inp)
+    expect(designs.some((d) => d.id === 'courtyard')).toBe(false)
+    for (const d of designs) expect(d.gfaM2).toBeLessThanOrEqual(pipeline.envelope!.gfaCapM2 + 1e-6)
+    expect(checks.every((c) => c.pass)).toBe(true)
+  })
 })
 
 describe('frontage check (ข้อ 53 fronting, else ข้อ 52(6) front open space)', () => {
