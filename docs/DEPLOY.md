@@ -65,3 +65,10 @@ npm i -g netlify-cli
 cd app && npm run build
 netlify deploy --prod --dir=dist
 ```
+
+## 4. Deployed (2026-11-21 14:35 UTC)
+
+- Repo (public): https://github.com/arjun-kshirsagar/bangkok-plot-envelope
+- Live (Vercel production, deployed by CLI from `app/`): https://bangkok-plot-envelope.vercel.app
+- Anonymous GET returns 200 with the app title; no deployment protection.
+- Redeploy after a change: `cd app && npm test && vercel --prod --yes`
