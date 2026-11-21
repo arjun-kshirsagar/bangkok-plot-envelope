@@ -41,8 +41,53 @@ describe('overpassRoadNear', () => {
     const tags = await overpassRoadNear([100.5, 13.7], new AbortController().signal)
     expect(tags).toEqual({ highway: 'secondary', lanes: '4' })
     expect(Date.now() - start).toBeLessThan(1000)
-    expect(signals.length).toBe(3)
+    expect(signals.length).toBe(4)
     expect(signals.every((s) => s.aborted)).toBe(true)
+  })
+
+  it('races the same-origin proxy and wins with it when the direct mirrors fail', async () => {
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: FetchInit) => {
+        urls.push(url)
+        if (url === '/api/overpass') {
+          return Promise.resolve(okResponse([{ type: 'way', tags: { highway: 'primary', width: '20' } }]))
+        }
+        if (url.includes('overpass-api.de')) return Promise.resolve(new Response('no', { status: 406 }))
+        return hanging(url, init)
+      }),
+    )
+    const tags = await overpassRoadNear([100.5604, 13.7373], new AbortController().signal)
+    expect(tags).toEqual({ highway: 'primary', width: '20' })
+    expect(urls).toContain('/api/overpass')
+    expect(urls.length).toBe(4)
+  })
+
+  it('falls back to a direct mirror when the proxy is missing (npm run dev)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: FetchInit) => {
+        if (url === '/api/overpass') return Promise.resolve(new Response('Not Found', { status: 404 }))
+        if (url.includes('coffee')) return Promise.resolve(okResponse([{ type: 'way', tags: { highway: 'tertiary', lanes: '2' } }]))
+        return hanging(url, init)
+      }),
+    )
+    const tags = await overpassRoadNear([100.5, 13.7], new AbortController().signal)
+    expect(tags).toEqual({ highway: 'tertiary', lanes: '2' })
+  })
+
+  it('treats a proxy 200 with a remark as a failed racer', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/overpass') {
+          return Promise.resolve(new Response(JSON.stringify({ elements: [], remark: 'runtime error' }), { status: 200 }))
+        }
+        return Promise.resolve(new Response('no', { status: 406 }))
+      }),
+    )
+    await expect(overpassRoadNear([100.5, 13.7], new AbortController().signal)).rejects.toThrow()
   })
 
   it('rejects when every mirror fails', async () => {

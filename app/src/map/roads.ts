@@ -1,7 +1,8 @@
 /**
  * Road width lookup for the front edge: OpenFreeMap tiles first (instant, has
  * class and name but no width/lanes), then Overpass for `width` / `lanes` tags
- * (mirrors raced in parallel, ~3 s worst case, 12 m default on failure).
+ * (same-origin /api/overpass proxy raced against the public mirrors; 12 m
+ * default on failure).
  */
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import type { LngLat } from '../engine/projection'
@@ -14,6 +15,13 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
 ]
+/**
+ * Same-origin Vercel function (app/api/overpass.js) that forwards the query
+ * server-side; browsers cannot reach the public mirrors directly (406 without
+ * CORS headers, or timeouts). Absent under `npm run dev`, where it simply fails
+ * and the direct mirrors decide, exactly as before.
+ */
+const OVERPASS_PROXY = '/api/overpass'
 const TILE_QUERY_RADIUS_PX = 30
 const OVERPASS_RADIUS_M = 30
 /**
@@ -22,6 +30,16 @@ const OVERPASS_RADIUS_M = 30
  * return 5xx, or refuse browser CORS.
  */
 const OVERPASS_TIMEOUT_MS = 3000
+/**
+ * The proxy itself races the mirrors server-side with a ~4 s budget, so it gets
+ * longer. Worst case when everything fails is therefore ~9 s; acceptable because
+ * the proxy is expected to succeed.
+ */
+const OVERPASS_PROXY_TIMEOUT_MS = 9000
+const OVERPASS_RACERS: ReadonlyArray<{ url: string; timeoutMs: number }> = [
+  { url: OVERPASS_PROXY, timeoutMs: OVERPASS_PROXY_TIMEOUT_MS },
+  ...OVERPASS_ENDPOINTS.map((url) => ({ url, timeoutMs: OVERPASS_TIMEOUT_MS })),
+]
 
 /** OpenMapTiles `class` values that are roads (not paths, tracks or rail). */
 const TILE_ROAD_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service'])
@@ -105,9 +123,10 @@ function bestRoadFromOverpass(elements: OverpassWay[]): RoadTags | null {
 
 /**
  * Nearest OSM highway way to a point via Overpass, with width / lanes tags.
- * All mirrors are queried in parallel; the first successful response wins and
- * the other requests are aborted. Each mirror gets OVERPASS_TIMEOUT_MS, so the
- * worst case is about that long in total. Rejects if every mirror fails or the
+ * The same-origin proxy and all direct mirrors are queried in parallel; the
+ * first successful response wins and the other requests are aborted. Direct
+ * mirrors get OVERPASS_TIMEOUT_MS and the proxy OVERPASS_PROXY_TIMEOUT_MS, so
+ * the worst case is about the proxy timeout. Rejects if every mirror fails or the
  * caller's `signal` aborts (plot changed).
  */
 export async function overpassRoadNear(point: LngLat, signal: AbortSignal): Promise<RoadTags | null> {
@@ -119,12 +138,12 @@ export async function overpassRoadNear(point: LngLat, signal: AbortSignal): Prom
   if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
   signal.addEventListener('abort', onCallerAbort, { once: true })
 
-  const attempt = async (endpoint: string): Promise<RoadTags | null> => {
+  const attempt = async ({ url: endpoint, timeoutMs }: { url: string; timeoutMs: number }): Promise<RoadTags | null> => {
     const res = await fetch(endpoint, {
       method: 'POST',
       body: `data=${encodeURIComponent(query)}`,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      signal: AbortSignal.any([race.signal, AbortSignal.timeout(OVERPASS_TIMEOUT_MS)]),
+      signal: AbortSignal.any([race.signal, AbortSignal.timeout(timeoutMs)]),
     })
     if (!res.ok) throw new Error(`Overpass ${endpoint} responded ${res.status}`)
     const json = (await res.json()) as { elements?: OverpassWay[]; remark?: string }
@@ -139,7 +158,7 @@ export async function overpassRoadNear(point: LngLat, signal: AbortSignal): Prom
   try {
     // Promise.any attaches a handler to every attempt, so aborted losers never
     // surface as unhandled rejections.
-    return await Promise.any(OVERPASS_ENDPOINTS.map(attempt))
+    return await Promise.any(OVERPASS_RACERS.map(attempt))
   } catch (err) {
     if (signal.aborted) throw signal.reason ?? err
     const errors = err instanceof AggregateError ? err.errors : [err]
