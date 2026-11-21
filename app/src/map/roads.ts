@@ -127,8 +127,13 @@ export async function overpassRoadNear(point: LngLat, signal: AbortSignal): Prom
       signal: AbortSignal.any([race.signal, AbortSignal.timeout(OVERPASS_TIMEOUT_MS)]),
     })
     if (!res.ok) throw new Error(`Overpass ${endpoint} responded ${res.status}`)
-    const json = (await res.json()) as { elements?: OverpassWay[] }
-    return bestRoadFromOverpass(json.elements ?? [])
+    const json = (await res.json()) as { elements?: OverpassWay[]; remark?: string }
+    // A 200 with a `remark` (server-side timeout) or no `elements` is a failed
+    // mirror, not "no road here": let the other mirrors keep racing.
+    if (!json.elements || json.remark) {
+      throw new Error(`Overpass ${endpoint}: ${json.remark ?? 'no elements'}`)
+    }
+    return bestRoadFromOverpass(json.elements)
   }
 
   try {
