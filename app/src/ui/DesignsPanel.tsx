@@ -64,6 +64,17 @@ export function DesignsPanel() {
   // Cover a larger override restored from a link, so the thumb is never clamped below the value.
   const maxSlider = Math.max(pipeline.envelope.maxFloors + OVERRIDE_EXTRA_FLOORS, ov.floors ?? 0, design.floors)
   const hasOverride = ov.floors !== undefined || ov.ignoreSetbacks
+  // Working: the design's GFA is the sum of block footprint × floors (the template's own formula); shown only when it adds up.
+  const blockSum = design.blocks.reduce((s, b) => s + b.areaM2 * b.floors, 0)
+  const plotArea = design.footprintAreaM2 + design.openSpaceM2
+  const gfaWork =
+    design.blocks.length > 0 && Math.abs(blockSum - design.gfaM2) < 1
+      ? `GFA ${n0(design.gfaM2)} m² = ${design.blocks.map((b) => `${b.label.toLowerCase()} ${b.floors} fl × ${n1(b.areaM2)} m²`).join(' + ')}`
+      : null
+  const siteWork =
+    design.openSpaceM2 > 0 && Math.abs(design.coverage * plotArea - design.footprintAreaM2) < 1
+      ? `Coverage ${Math.round(design.coverage * 100)}% = footprint ${n0(design.footprintAreaM2)} m² ÷ plot ${n0(plotArea)} m² · open space ${n0(design.openSpaceM2)} m² = plot − footprint`
+      : null
 
   return (
     <div className="designs">
@@ -75,6 +86,13 @@ export function DesignsPanel() {
       </div>
       {unavailableList}
 
+      {(gfaWork || siteWork) && (
+        <details className="working">
+          <summary>working: {design.name}</summary>
+          {gfaWork && <div className="num">{gfaWork}</div>}
+          {siteWork && <div className="num">{siteWork}</div>}
+        </details>
+      )}
       <p className="hint">{design.description}</p>
       <ul className="design-notes">
         {design.notes.map((n, i) => (

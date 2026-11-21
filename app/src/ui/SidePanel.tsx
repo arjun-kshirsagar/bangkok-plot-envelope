@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { STAGE_IDS, type StageId } from '../engine/pipeline'
 import { MAX_PLOT_VERTICES } from '../engine/plot'
-import { BUILDING_TYPES, ZONE_RULES, isBuildingType } from '../rules'
+import { BUILDING_TYPES, ZONE_RULES, isBuildingType, ruleNumber } from '../rules'
 import { fitToPlot, goToPlotOutsideBounds, plotOutsideMaxBounds } from '../map/mapStatus'
 import {
   FLOOR_TO_FLOOR_RANGE,
@@ -29,13 +29,22 @@ const n0 = (v: number) => Math.round(v).toLocaleString('en-GB')
 const n1 = (v: number) => v.toLocaleString('en-GB', { maximumFractionDigits: 1, minimumFractionDigits: 1 })
 const n2 = (v: number) => v.toLocaleString('en-GB', { maximumFractionDigits: 2 })
 
-function Row({ label, value, sub, ids }: { label: string; value: string; sub?: string; ids?: string[] }) {
+/** True when the displayed working reproduces the displayed result (to the nearest m² / 0.1 m). */
+const adds = (result: number, computed: number, tol = 1) => Number.isFinite(result) && Number.isFinite(computed) && Math.abs(result - computed) < tol
+
+function Row({ label, value, sub, ids, work }: { label: string; value: string; sub?: string; ids?: string[]; work?: string | null }) {
   return (
     <tr>
       <th>{label}</th>
       <td className="num">
         {value}
         {sub && <span className="sub-inline"> {sub}</span>}
+        {work && (
+          <details className="working">
+            <summary>working</summary>
+            {work}
+          </details>
+        )}
       </td>
       <td className="refs">{ids && <RuleRef ids={ids} />}</td>
     </tr>
@@ -84,6 +93,33 @@ export function SidePanel() {
   const plotOk = validation.ok
   const env = pipeline.envelope
   const stage = (id: StageId) => pipeline.stages.find((s) => s.id === id)
+
+  // Working lines: every input is the value the engine used; a line is shown only when it reproduces the result.
+  const A = stage('plot')?.numbers.plotAreaM2 ?? NaN
+  const far = ZONE_RULES.zone.far
+  const sFront = stage('roadSetback')?.numbers.frontSetbackM ?? NaN
+  const heightMult = ruleNumber(ZONE_RULES, 'mr55-height-road', 'multiplier')
+  const openPlotPct = typeRules?.openSpacePlotPercentMin ?? NaN
+  const osrPct = ZONE_RULES.zone.osrPercent
+  const work = env
+    ? {
+        gfaCap: adds(env.maxGfaM2, A * far) ? `${n0(env.maxGfaM2)} m² = plot ${n1(A)} m² × FAR ${far}` : null,
+        height: adds(env.roadHeightM, heightMult * (roadWidthM + sFront), 0.05)
+          ? `${n1(env.roadHeightM)} m = ${heightMult} × (road ${n2(roadWidthM)} m + front setback ${n2(sFront)} m)` +
+            (env.heightCapBy === 'type' ? `; the lower ${typeCapLabel} governs, so the cap is ${n1(env.maxHeightM)} m` : '')
+          : null,
+        floors: `${env.maxFloors} = min(by height ${env.floorsByHeight}, by FAR ${env.floorsByFar}) · built ${n1(env.heightM)} m = ${env.maxFloors} fl × ${n2(floorToFloorM)} m`,
+        gfa: adds(env.gfaM2, env.maxFloors * env.footprintAreaM2) ? `${n0(env.gfaM2)} m² = ${env.maxFloors} fl × footprint ${n1(env.footprintAreaM2)} m²` : null,
+        coverage: adds(env.coverage * 100, (100 * env.footprintAreaM2) / A, 0.05)
+          ? `coverage ${Math.round(env.coverage * 100)}% = footprint ${n0(env.footprintAreaM2)} m² ÷ plot ${n0(A)} m²`
+          : null,
+        openSpace:
+          adds(env.openSpaceM2, A - env.footprintAreaM2) &&
+          adds(env.openSpaceRequiredM2, Math.max((openPlotPct / 100) * A, (osrPct / 100) * env.gfaM2))
+            ? `${n0(env.openSpaceM2)} m² = plot ${n1(A)} m² − footprint ${n1(env.footprintAreaM2)} m²; need ≥ ${n0(env.openSpaceRequiredM2)} m² = the larger of ${openPlotPct}% × plot ${n0(A)} m² = ${n0((openPlotPct / 100) * A)} m² and OSR ${osrPct}% × GFA ${n0(env.gfaM2)} m² = ${n0((osrPct / 100) * env.gfaM2)} m² (${(openPlotPct / 100) * A >= (osrPct / 100) * env.gfaM2 ? `${openPlotPct}% of plot governs` : `OSR ${osrPct}% governs`})`
+            : null,
+      }
+    : null
 
   return (
     <aside className="panel" aria-label="Inputs and results">
@@ -283,20 +319,23 @@ export function SidePanel() {
                   value={`${n0(env.footprintAreaM2)} m²`}
                   sub={`${Math.round(env.coverage * 100)}% coverage · limited by ${env.footprintLimitedBy === 'setbacks' ? 'setbacks' : env.footprintLimitedBy === 'osr' ? 'OSR 4%' : '30% open space'}`}
                   ids={stage('openSpace')?.sources ?? []}
+                  work={work?.coverage}
                 />
                 <Row
                   label="Height cap"
                   value={`${n1(env.maxHeightM)} m`}
                   sub={env.heightCapBy === 'type' ? `${typeCapLabel} · 2 × (road + front setback) allows ${n1(env.roadHeightM)} m` : '2 × (road + front setback)'}
                   ids={env.heightCapBy === 'type' ? ['mr55-road-setback', 'mr55-height-road'] : ['mr55-height-road']}
+                  work={work?.height}
                 />
                 <Row
                   label="Max floors"
                   value={`${env.maxFloors}`}
                   sub={`${n1(env.heightM)} m built · by height ${env.floorsByHeight}, by FAR ${env.floorsByFar}`}
                   ids={['floor-to-floor', 'height-measurement']}
+                  work={work?.floors}
                 />
-                <Row label={`GFA cap (FAR ${ZONE_RULES.zone.far})`} value={`${n0(env.maxGfaM2)} m²`} ids={['zone-far', 'far-counts-all-floors', 'far-bonus-ignored']} />
+                <Row label={`GFA cap (FAR ${ZONE_RULES.zone.far})`} value={`${n0(env.maxGfaM2)} m²`} ids={['zone-far', 'far-counts-all-floors', 'far-bonus-ignored']} work={work?.gfaCap} />
                 {env.gfaCapM2 < env.maxGfaM2 - 0.5 && (
                   <Row
                     label="GFA cap applied"
@@ -305,12 +344,13 @@ export function SidePanel() {
                     ids={env.gfaCapM2 <= ZONE_RULES.thresholds.extraLargeGfaM2 + 0.5 ? ['highrise-threshold', 'mr33-road-access'] : ['mr33-road-access']}
                   />
                 )}
-                <Row label="GFA in envelope" value={`${n0(env.gfaM2)} m²`} sub={`${Math.round((100 * env.gfaM2) / env.gfaCapM2)}% of cap`} />
+                <Row label="GFA in envelope" value={`${n0(env.gfaM2)} m²`} sub={`${Math.round((100 * env.gfaM2) / env.gfaCapM2)}% of cap`} work={work?.gfa} />
                 <Row
                   label="Open space"
                   value={`${n0(env.openSpaceM2)} m²`}
                   sub={`need ${n0(env.openSpaceRequiredM2)} · OSR ${n1((100 * env.openSpaceM2) / Math.max(env.gfaM2, 1))}% of GFA`}
                   ids={['zone-osr', 'bcl-open-space-plot']}
+                  work={work?.openSpace}
                 />
                 <tr>
                   <th>Binding rule</th>
