@@ -3,10 +3,10 @@
 Order and headings are mandated by the brief (assignment/FULL_BRIEF.md section 5). Fill every part in your own words. Facts and numbers: docs/WRITEUP_FACTS.md.
 
 ## 1. Live link
-<Vercel URL>  (open in a private window before submitting: no sign-in, loads the example plot)
+https://bangkok-plot-envelope.vercel.app  (open in a private window before submitting: no sign-in, loads the example plot)
 
 ## 2. Repo
-<public GitHub URL>
+https://github.com/arjun-kshirsagar/bangkok-plot-envelope
 
 ## 3. One-pager
 ### What you understood
