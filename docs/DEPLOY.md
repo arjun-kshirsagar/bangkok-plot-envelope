@@ -1,6 +1,6 @@
 # Deploy
 
-Static Vite site in `app/`. No backend, no environment variables, no API keys.
+Static Vite site in `app/`, plus one stateless function (`app/api/overpass.js`, added 2026-11-21) that proxies the Overpass road-width lookup. No environment variables, no API keys.
 Nothing below has been run by the builder agent; the orchestrator runs it after review.
 
 ## 1. Public GitHub repo

@@ -24,7 +24,7 @@ npm test           # 112 Vitest tests: engine, designs, checks, rules, URL state
 npm run build
 ```
 
-No API keys, no backend. Tiles and building heights from OpenFreeMap (OpenStreetMap data).
+No API keys. The only server code is one stateless function (`app/api/overpass.js`) that proxies the OSM road-width lookup; the app works without it. Tiles and building heights from OpenFreeMap (OpenStreetMap data).
 
 ## Repo map
 
