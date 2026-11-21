@@ -22,7 +22,7 @@ export const BUILDING_TYPES: readonly BuildingTypeOption[] = [
   },
   {
     id: 'lowRiseResidential',
-    label: 'Low-rise residential (<= 3 storeys)',
+    label: 'Low-rise residential (≤ 3 storeys)',
     description: 'House / townhouse, max 3 storeys and 10 m. Standard regime only.',
   },
 ]

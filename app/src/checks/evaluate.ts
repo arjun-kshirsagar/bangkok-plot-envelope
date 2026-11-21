@@ -162,7 +162,7 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   // 4. Height cap.
   rows.push({
     ruleId: 'mr55-height-road',
-    label: 'Height (2 x road rule)',
+    label: 'Height (2 × road rule)',
     requirement:
       env.heightCapBy === 'type'
         ? `Height ≤ ${m(env.maxHeightM, 1)}: the building type's own cap binds (2 x (right-of-way + front setback) allows ${m(env.roadHeightM, 1)}).`
