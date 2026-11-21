@@ -13,7 +13,7 @@ git add -A
 git commit -m "Scaffold Bangkok plot feasibility tool"
 
 # Requires `gh auth login` once. Creates a PUBLIC repo and pushes main.
-gh repo create bangkok-plot-feasibility --public --source=. --remote=origin --push
+gh repo create bangkok-plot-envelope --public --source=. --remote=origin --push
 ```
 
 Verify: `gh repo view --web` opens without sign-in in a private window.
@@ -30,7 +30,7 @@ vercel login
 #   Set up and deploy?            Y
 #   Scope                         <your account>
 #   Link to existing project?     N
-#   Project name                  bangkok-plot-feasibility
+#   Project name                  bangkok-plot-envelope
 #   In which directory is code?   ./          (we are already inside app/)
 #   Framework preset              Vite        (auto-detected)
 #   Build command                 npm run build
