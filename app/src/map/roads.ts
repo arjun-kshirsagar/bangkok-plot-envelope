@@ -1,6 +1,7 @@
 /**
  * Road width lookup for the front edge: OpenFreeMap tiles first (instant, has
- * class and name but no width/lanes), then Overpass for `width` / `lanes` tags.
+ * class and name but no width/lanes), then Overpass for `width` / `lanes` tags
+ * (mirrors raced in parallel, ~3 s worst case, 12 m default on failure).
  */
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import type { LngLat } from '../engine/projection'
@@ -15,8 +16,12 @@ const OVERPASS_ENDPOINTS = [
 ]
 const TILE_QUERY_RADIUS_PX = 30
 const OVERPASS_RADIUS_M = 30
-/** Per-endpoint budget; Overpass mirrors are often slow or return 5xx. */
-const OVERPASS_TIMEOUT_MS = 6000
+/**
+ * Per-mirror budget. Mirrors are raced in parallel, so this is also the total
+ * worst-case wait before the 12 m default notice shows. Mirrors are often slow,
+ * return 5xx, or refuse browser CORS.
+ */
+const OVERPASS_TIMEOUT_MS = 3000
 
 /** OpenMapTiles `class` values that are roads (not paths, tracks or rail). */
 const TILE_ROAD_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service'])
@@ -85,36 +90,59 @@ interface OverpassWay {
   tags?: Record<string, string>
 }
 
-/** Nearest OSM highway way to a point via Overpass, with width / lanes tags. */
-async function overpassRoadNear(point: LngLat, signal: AbortSignal): Promise<RoadTags | null> {
+/** Picks the best road from an Overpass response: ways with `width` / `lanes` tags first. */
+function bestRoadFromOverpass(elements: OverpassWay[]): RoadTags | null {
+  const roads = elements
+    .map((e) => (e.tags ?? {}) as RoadTags)
+    .filter((t) => t.highway && ROAD_HIGHWAY_CLASSES.has(t.highway))
+  if (roads.length === 0) return null
+  // Prefer ways that actually carry a width or lanes tag.
+  const scored = roads
+    .map((t) => ({ t, score: (t.width ? 2 : 0) + (t.lanes ? 1 : 0) }))
+    .sort((a, b) => b.score - a.score)
+  return scored[0].t
+}
+
+/**
+ * Nearest OSM highway way to a point via Overpass, with width / lanes tags.
+ * All mirrors are queried in parallel; the first successful response wins and
+ * the other requests are aborted. Each mirror gets OVERPASS_TIMEOUT_MS, so the
+ * worst case is about that long in total. Rejects if every mirror fails or the
+ * caller's `signal` aborts (plot changed).
+ */
+export async function overpassRoadNear(point: LngLat, signal: AbortSignal): Promise<RoadTags | null> {
   const [lng, lat] = point
   const query = `[out:json][timeout:20];way["highway"](around:${OVERPASS_RADIUS_M},${lat.toFixed(6)},${lng.toFixed(6)});out tags;`
-  let lastError: unknown = null
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        body: `data=${encodeURIComponent(query)}`,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        signal: AbortSignal.any([signal, AbortSignal.timeout(OVERPASS_TIMEOUT_MS)]),
-      })
-      if (!res.ok) throw new Error(`Overpass ${endpoint} responded ${res.status}`)
-      const json = (await res.json()) as { elements: OverpassWay[] }
-      const roads = json.elements
-        .map((e) => (e.tags ?? {}) as RoadTags)
-        .filter((t) => t.highway && ROAD_HIGHWAY_CLASSES.has(t.highway))
-      if (roads.length === 0) return null
-      // Prefer ways that actually carry a width or lanes tag.
-      const scored = roads
-        .map((t) => ({ t, score: (t.width ? 2 : 0) + (t.lanes ? 1 : 0) }))
-        .sort((a, b) => b.score - a.score)
-      return scored[0].t
-    } catch (err) {
-      if (signal.aborted) throw err
-      lastError = err
-    }
+  // One controller for all mirrors: aborted by the caller, or by us once a mirror wins.
+  const race = new AbortController()
+  const onCallerAbort = () => race.abort(signal.reason)
+  if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+  signal.addEventListener('abort', onCallerAbort, { once: true })
+
+  const attempt = async (endpoint: string): Promise<RoadTags | null> => {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      body: `data=${encodeURIComponent(query)}`,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      signal: AbortSignal.any([race.signal, AbortSignal.timeout(OVERPASS_TIMEOUT_MS)]),
+    })
+    if (!res.ok) throw new Error(`Overpass ${endpoint} responded ${res.status}`)
+    const json = (await res.json()) as { elements?: OverpassWay[] }
+    return bestRoadFromOverpass(json.elements ?? [])
   }
-  throw lastError ?? new Error('Overpass unavailable')
+
+  try {
+    // Promise.any attaches a handler to every attempt, so aborted losers never
+    // surface as unhandled rejections.
+    return await Promise.any(OVERPASS_ENDPOINTS.map(attempt))
+  } catch (err) {
+    if (signal.aborted) throw signal.reason ?? err
+    const errors = err instanceof AggregateError ? err.errors : [err]
+    throw errors[errors.length - 1] ?? new Error('Overpass unavailable')
+  } finally {
+    signal.removeEventListener('abort', onCallerAbort)
+    race.abort() // cancel any mirror still in flight
+  }
 }
 
 /**
