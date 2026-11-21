@@ -1050,6 +1050,12 @@ details.working {
   font-weight: 400;
   line-height: 1.4;
 }
+table.numbers tr.working-row td {
+  padding: 0 0 6px;
+}
+table.numbers tr.working-row details.working {
+  margin-top: -4px;
+}
 details.working summary {
   cursor: pointer;
   width: fit-content;

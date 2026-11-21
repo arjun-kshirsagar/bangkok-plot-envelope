@@ -34,20 +34,27 @@ const adds = (result: number, computed: number, tol = 1) => Number.isFinite(resu
 
 function Row({ label, value, sub, ids, work }: { label: string; value: string; sub?: string; ids?: string[]; work?: string | null }) {
   return (
-    <tr>
-      <th>{label}</th>
-      <td className="num">
-        {value}
-        {sub && <span className="sub-inline"> {sub}</span>}
-        {work && (
-          <details className="working">
-            <summary>working</summary>
-            {work}
-          </details>
-        )}
-      </td>
-      <td className="refs">{ids && <RuleRef ids={ids} />}</td>
-    </tr>
+    <>
+      <tr>
+        <th>{label}</th>
+        <td className="num">
+          {value}
+          {sub && <span className="sub-inline"> {sub}</span>}
+        </td>
+        <td className="refs">{ids && <RuleRef ids={ids} />}</td>
+      </tr>
+      {work && (
+        <tr className="working-row">
+          {/* Own full-width row: the value column is too narrow for a formula. */}
+          <td colSpan={3}>
+            <details className="working">
+              <summary>working</summary>
+              {work}
+            </details>
+          </td>
+        </tr>
+      )}
+    </>
   )
 }
 
