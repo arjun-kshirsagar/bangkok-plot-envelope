@@ -198,7 +198,7 @@ export function slabTemplate(ctx: TemplateContext): Design | null {
   const floors = ctx.overrides.floors ?? ctx.maxFloors
   const b = block('slab', 'Slab', ctx.base, 0, floors, ctx.f2f)
   const reshaped = ctx.frontageNote !== null && !ctx.frontageNote.startsWith('Capped')
-  const notes = [`Footprint ${reshaped ? 'is the envelope footprint reshaped for the frontage rule (see below)' : 'equals the envelope footprint'} (${fmt(b.areaM2)} m2), ${floors} floors x ${ctx.f2f} m.`]
+  const notes = [`Footprint ${reshaped ? 'is the envelope footprint reshaped for the frontage rule (see below)' : 'equals the envelope footprint'} (${fmt(b.areaM2)} m²), ${floors} floors x ${ctx.f2f} m.`]
   const limitedBy: DesignLimit = ctx.overrides.floors !== undefined ? 'override' : ctx.pipeline.envelope?.bindingRule === 'far' ? 'far' : 'height'
   if (limitedBy === 'override') notes.push(`Floors overridden by user (template default ${ctx.maxFloors}).`)
   return finish('slab', 'Full-envelope slab', 'The envelope built out as one block: maximum footprint, maximum floors.', ctx, [b], ctx.base, notes, limitedBy, ctx.maxFloors)
@@ -226,7 +226,7 @@ export function podiumTowerTemplate(ctx: TemplateContext): Design | null {
   const osrCap = ctx.overrides.ignoreSetbacks ? Infinity : osrGfaMax(ctx, F)
   let target = Math.min(ctx.maxGfaM2, heightBoundGfa, osrCap)
   if (osrCap < Math.min(ctx.maxGfaM2, heightBoundGfa) - 1e-6) {
-    notes.push(`OSR caps the GFA at ${fmt(osrCap)} m2 for this footprint (open space must be >= ${Math.round(ctx.osrFrac * 100)}% of GFA).`)
+    notes.push(`OSR caps the GFA at ${fmt(osrCap)} m² for this footprint (open space must be ≥ ${Math.round(ctx.osrFrac * 100)}% of GFA).`)
   }
   if (!farBound) {
     // Height-bound: a slimmer tower only loses floor area; keep 92% of the envelope GFA for articulation.
@@ -242,7 +242,7 @@ export function podiumTowerTemplate(ctx: TemplateContext): Design | null {
   if (strict && podiumFloors * F > target + 0.5) {
     podiumFloors = Math.floor(target / F + 1e-9)
     if (podiumFloors < 1 || ctx.floorsByHeight <= podiumFloors) return null
-    notes.push(`The GFA target (${fmt(target)} m2) does not fit a ${PODIUM_FLOORS_DEFAULT}-floor podium on ${fmt(F)} m2, so the podium is ${podiumFloors} floor${podiumFloors > 1 ? 's' : ''}.`)
+    notes.push(`The GFA target (${fmt(target)} m²) does not fit a ${PODIUM_FLOORS_DEFAULT}-floor podium on ${fmt(F)} m², so the podium is ${podiumFloors} floor${podiumFloors > 1 ? 's' : ''}.`)
   }
   const towerFloorsMax = ctx.floorsByHeight - podiumFloors
   let towerArea = (target - podiumFloors * F) / towerFloorsMax
@@ -273,7 +273,7 @@ export function podiumTowerTemplate(ctx: TemplateContext): Design | null {
       towerFloors = 1
     }
     limitedBy = 'thinness'
-    notes.push(`Thinness-limited: a tower sized for the GFA target would be under ${TOWER_MIN_WIDTH_M} m wide or ${TOWER_MIN_AREA_M2} m2, so the tower keeps ${fmt(towerArea)} m2 and drops to ${towerFloors} floors.`)
+    notes.push(`Thinness-limited: a tower sized for the GFA target would be under ${TOWER_MIN_WIDTH_M} m wide or ${TOWER_MIN_AREA_M2} m², so the tower keeps ${fmt(towerArea)} m² and drops to ${towerFloors} floors.`)
   }
   if (!tower) return null
 
@@ -289,7 +289,7 @@ export function podiumTowerTemplate(ctx: TemplateContext): Design | null {
   blocks.push(block('podium', 'Podium', ctx.base, 0, podiumF, ctx.f2f))
   const towerF = totalFloors - podiumF
   if (towerF > 0) blocks.push(block('tower', 'Tower', tower, podiumF * ctx.f2f, towerF, ctx.f2f))
-  notes.unshift(`Podium ${podiumF} floors on ${fmt(F)} m2, tower ${towerF} floors on ${fmt(towerArea)} m2 (${fmt((100 * towerArea) / F)}% of the footprint).`)
+  notes.unshift(`Podium ${podiumF} floors on ${fmt(F)} m², tower ${towerF} floors on ${fmt(towerArea)} m² (${fmt((100 * towerArea) / F)}% of the footprint).`)
   return finish('podiumTower', 'Tower on podium', 'Two-storey podium over the whole footprint with a slimmer tower rising to the height cap.', ctx, blocks, ctx.base, notes, limitedBy, defaultFloors)
 }
 
@@ -398,7 +398,7 @@ export function courtyardTemplate(ctx: TemplateContext): Design | null {
   const b = block('court', 'Courtyard block', ring, 0, floors, ctx.f2f)
   const courtMinOk = hasMinWidthFrom(ctx, COURTYARD_DEPTH_M, 6)
   const notes = [
-    `${COURTYARD_DEPTH_M} m deep block around a ${fmt(polygonArea(inner))} m2 court; ${floors} floors (${needed <= ctx.maxFloors ? `${needed} needed for ${COURTYARD_GFA_TARGET_FRACTION * 100}% of the FAR cap` : `capped by the envelope at ${ctx.maxFloors}`}).`,
+    `${COURTYARD_DEPTH_M} m deep block around a ${fmt(polygonArea(inner))} m² court; ${floors} floors (${needed <= ctx.maxFloors ? `${needed} needed for ${COURTYARD_GFA_TARGET_FRACTION * 100}% of the FAR cap` : `capped by the envelope at ${ctx.maxFloors}`}).`,
     courtMinOk
       ? 'Court is at least 6 m across, so windows facing each other across it satisfy MR-55 ข้อ 48 (informational; one building, so ข้อ 48 strictly concerns separate blocks).'
       : 'Court is under 6 m across in places: facing windows would breach the MR-55 ข้อ 48 spacing used as guidance.',
@@ -546,7 +546,7 @@ function designPlot(pipeline: PipelineResult, rules: ZoneRules, residential: boo
   }
   if (byOpen && gOpen === best && gOpen > 0 && byOpen.v.open) {
     const o = byOpen.v.open
-    byOpen.dp.note = `${notFronting} Uses the ข้อ 52(6) front open space: building pushed back to ${m1(byOpen.D)} from the road edge line, ${needDepth} m band ${m1(o.bandM)} along the building (needs >= ${m1(o.needBandM)}), connected ${o.connection}.`
+    byOpen.dp.note = `${notFronting} Uses the ข้อ 52(6) front open space: building pushed back to ${m1(byOpen.D)} from the road edge line, ${needDepth} m band ${m1(o.bandM)} along the building (needs ≥ ${m1(o.needBandM)}), connected ${o.connection}.`
     return byOpen.dp
   }
   if (!residential) return plain // no storey exemption for non-residential buildings: the checklist shows the failure
@@ -554,13 +554,13 @@ function designPlot(pipeline: PipelineResult, rules: ZoneRules, residential: boo
   const po = deep?.v.open ?? plainVerdict.open
   const why = po
     ? po.bandM < po.needBandM
-      ? `the ${needDepth} m band is ${m1(po.bandM)} along the building, needs >= ${m1(po.needBandM)}`
-      : `a ${needDepth} m band ${m1(po.bandM)} long exists (needs >= ${m1(po.needBandM)}) but it does not reach the road through open plot >= ${fp.internalRoadM} m wide`
+      ? `the ${needDepth} m band is ${m1(po.bandM)} along the building, needs ≥ ${m1(po.needBandM)}`
+      : `a ${needDepth} m band ${m1(po.bandM)} long exists (needs ≥ ${m1(po.needBandM)}) but it does not reach the road through open plot ≥ ${fp.internalRoadM} m wide`
     : `no band could be tested`
   return {
     ...plain,
     floorsCap: fp.exemptStoreys,
-    note: `Capped at ${fp.exemptStoreys} storeys (residential buildings of <= ${fp.exemptStoreys} storeys are exempt from ข้อ 52(6) / 53). ${notFronting} ${
+    note: `Capped at ${fp.exemptStoreys} storeys (residential buildings of ≤ ${fp.exemptStoreys} storeys are exempt from ข้อ 52(6) / 53). ${notFronting} ${
       byFronting || byOpen
         ? 'A taller footprint that fronts the way or keeps the front open space carries less floor area.'
         : `No ข้อ 52(6) front open space fits either: with the building pushed back${deep ? ` to ${m1(deep.near)} from the road edge line` : ''}, ${why}.`
@@ -583,8 +583,8 @@ export interface DesignSet {
 const TEMPLATE_NAMES: Record<DesignId, string> = { slab: 'Full-envelope slab', podiumTower: 'Tower on podium', courtyard: 'Courtyard block' }
 const NOT_APPLICABLE: Record<DesignId, string> = {
   slab: 'the envelope has no buildable floor.',
-  podiumTower: `the envelope is too low or too small for a podium plus a tower at least ${TOWER_MIN_WIDTH_M} m wide and ${TOWER_MIN_AREA_M2} m2 within the GFA target.`,
-  courtyard: `needs an envelope footprint over ${COURTYARD_MIN_FOOTPRINT_M2.toLocaleString('en-GB')} m2 with room for a ${COURTYARD_DEPTH_M} m deep block around a court.`,
+  podiumTower: `the envelope is too low or too small for a podium plus a tower at least ${TOWER_MIN_WIDTH_M} m wide and ${TOWER_MIN_AREA_M2} m² within the GFA target.`,
+  courtyard: `needs an envelope footprint over ${COURTYARD_MIN_FOOTPRINT_M2.toLocaleString('en-GB')} m² with room for a ${COURTYARD_DEPTH_M} m deep block around a court.`,
 }
 
 /** Moves every vertex by under 1 mm (deterministic), to step around a degenerate boolean configuration. */

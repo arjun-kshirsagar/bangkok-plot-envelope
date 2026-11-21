@@ -30,7 +30,7 @@ describe('boundary setback uses the design height (standard regime)', () => {
     expect(tall.heightM).toBeCloseTo(12, 6)
     const row = evaluateChecks(tall, pipeline, ZONE_RULES, inp).rows.find((r) => r.label === 'Boundary setback')!
     expect(row.pass).toBe(false)
-    expect(row.allowed).toBe('>= 3 m')
+    expect(row.allowed).toBe('≥ 3 m')
     expect(row.note).toMatch(/needs 3 m/)
   })
 })
@@ -58,7 +58,7 @@ describe('GFA cap row in the narrow-road hold', () => {
   it('names the 10,000 m2 extra-large hold, not the 18 m road tier', () => {
     const inp = inputs(rect(100, 100), { roadWidthM: 8 })
     const pipeline = runPipeline(inp, ZONE_RULES)
-    expect(pipeline.envelope!.gfaCapNote).toMatch(/10,000 m2/)
+    expect(pipeline.envelope!.gfaCapNote).toMatch(/10,000 m²/)
     const designs = generateDesigns(pipeline, ZONE_RULES, inp)
     for (const d of designs) {
       const row = evaluateChecks(d, pipeline, ZONE_RULES, inp).rows.find((r) => r.ruleId === 'highrise-threshold')!

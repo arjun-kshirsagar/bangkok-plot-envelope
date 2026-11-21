@@ -59,8 +59,14 @@ export function fitToPlot(plot: Polygon | null, options: { duration?: number } =
 
 /** Wires tile-loading status; returns a cleanup. */
 export function trackTileLoading(map: MapLibreMap): () => void {
-  const update = () => useMapStatus.getState().setTilesLoading(!map.areTilesLoaded())
-  const onIdle = () => useMapStatus.getState().setTilesLoading(false)
+  // Stay in "loading" until the first idle (first tiles rendered): before the style has
+  // loaded there are no sources, so areTilesLoaded() would report true too early.
+  let firstIdle = false
+  const update = () => useMapStatus.getState().setTilesLoading(!firstIdle || !map.areTilesLoaded())
+  const onIdle = () => {
+    firstIdle = true
+    useMapStatus.getState().setTilesLoading(false)
+  }
   map.on('sourcedata', update)
   map.on('dataloading', update)
   map.on('idle', onIdle)

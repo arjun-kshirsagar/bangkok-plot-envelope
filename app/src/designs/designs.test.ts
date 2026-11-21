@@ -129,7 +129,7 @@ describe('frontage check (ข้อ 53 fronting, else ข้อ 52(6) front open
     const row = evaluateChecks(block, pipeline, ZONE_RULES, inp).rows.find((r) => r.ruleId === 'bma-frontage')!
     expect(row.pass).toBe(true)
     expect(row.note).toMatch(/Does not front the road/)
-    expect(row.note).toMatch(/Uses the ข้อ 52\(6\) front open space: 12 m band, 28 m along the building \(needs >= 21 m\), connected by a straight open path at least 6 m wide/)
+    expect(row.note).toMatch(/Uses the ข้อ 52\(6\) front open space: 12 m band, 28 m along the building \(needs ≥ 21 m\), connected by a straight open path at least 6 m wide/)
   })
 
   it('fails when the band along the building is shorter than 1/6 of its perimeter, with the numbers', () => {
@@ -138,7 +138,7 @@ describe('frontage check (ข้อ 53 fronting, else ข้อ 52(6) front open
     const block = { ...run(inputs(metricPlot([[0, 0], [40, 0], [40, 80], [0, 80]]))).designs[0], floors: 12, heightM: 36, footprint: rectAt(3, 25, 12, 65) }
     const row = evaluateChecks(block, pipeline, ZONE_RULES, inp).rows.find((r) => r.ruleId === 'bma-frontage')!
     expect(row.pass).toBe(false)
-    expect(row.note).toMatch(/No ข้อ 52\(6\) front open space either: 12 m band 9 m long \(needs >= 16.3 m\)/)
+    expect(row.note).toMatch(/No ข้อ 52\(6\) front open space either: 12 m band 9 m long \(needs ≥ 16.3 m\)/)
   })
 
   it('a flag lot (12 m x 20 m pole, 40 x 50 m body, 20 m road) keeps the full height via the front open space and the pole', () => {
@@ -159,7 +159,7 @@ describe('frontage check (ข้อ 53 fronting, else ข้อ 52(6) front open
     const inp = inputs(metricPlot([[0, 0], [15, 0], [15, 80], [0, 80]]))
     const { designs } = run(inp)
     for (const d of designs) {
-      if (d.floors <= 3 && d.floorsCap !== undefined) expect(d.notes.join(' ')).toMatch(/needs >= \d/)
+      if (d.floors <= 3 && d.floorsCap !== undefined) expect(d.notes.join(' ')).toMatch(/needs ≥ \d/)
     }
   })
 })

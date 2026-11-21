@@ -57,6 +57,10 @@ export interface Envelope {
   maxHeightM: number
   /** Built height = maxFloors x floorToFloorM, metres. */
   heightM: number
+  /** Which cap sets floorsByHeight: the 2 x (road + setback) rule or the building type's own storey / height cap. */
+  heightCapBy: 'road' | 'type'
+  /** Height allowed by the road rule alone, metres. */
+  roadHeightM: number
   maxFloors: number
   floorsByHeight: number
   floorsByFar: number
@@ -179,17 +183,17 @@ export function roadSetbackM(rules: ZoneRules, roadWidthM: number): { m: number;
   let note: string
   if (W < 10) {
     tier2 = Math.max(0, t2Lt10 - W / 2)
-    note = `road ${fmt(W)} m < 10 m: building line >= ${t2Lt10} m from the road centreline = ${fmt(tier2, 2)} m from the road edge (MR-55 ข้อ 41(1))`
+    note = `road ${fmt(W)} m < 10 m: building line ≥ ${t2Lt10} m from the road centreline = ${fmt(tier2, 2)} m from the road edge (MR-55 ข้อ 41(1))`
   } else if (W <= 20) {
     tier2 = W * t2Frac
-    note = `road ${fmt(W)} m (10-20 m tier): >= 1/10 of the width = ${fmt(tier2, 2)} m from the road edge (MR-55 ข้อ 41(2))`
+    note = `road ${fmt(W)} m (10-20 m tier): ≥ 1/10 of the width = ${fmt(tier2, 2)} m from the road edge (MR-55 ข้อ 41(2))`
   } else {
     tier2 = t2Gt20
-    note = `road ${fmt(W)} m > 20 m: >= ${t2Gt20} m from the road edge (MR-55 ข้อ 41(3))`
+    note = `road ${fmt(W)} m > 20 m: ≥ ${t2Gt20} m from the road edge (MR-55 ข้อ 41(3))`
   }
   const tier1 = W < 6 ? Math.max(0, anyLt6 - W / 2) : 0
   if (tier1 > tier2) {
-    return { m: tier1, note: `road ${fmt(W)} m < 6 m: any building >= ${anyLt6} m from the centreline = ${fmt(tier1, 2)} m from the edge (MR-55 ข้อ 41 วรรคแรก)` }
+    return { m: tier1, note: `road ${fmt(W)} m < 6 m: any building ≥ ${anyLt6} m from the centreline = ${fmt(tier1, 2)} m from the edge (MR-55 ข้อ 41 วรรคแรก)` }
   }
   return { m: tier2, note }
 }
@@ -244,7 +248,7 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
     id: 'plot',
     label: 'Plot',
     geometry: toGeoPolygon(ctx.plotMetric),
-    annotations: [`Plot area ${fmt(A, 0)} m2 (planar, UTM 47N), ${ctx.edgeCount} edges, edge ${ctx.frontEdgeIndex + 1} faces a ${fmt(W)} m right-of-way.`],
+    annotations: [`Plot area ${fmt(A, 0)} m² (planar, UTM 47N), ${ctx.edgeCount} edges, edge ${ctx.frontEdgeIndex + 1} faces a ${fmt(W)} m right-of-way.`],
     numbers: { plotAreaM2: A, roadWidthM: W },
     sources: ['road-width-definition', 'edge-classification'],
   })
@@ -256,7 +260,7 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
   const hr = typeRules.setbacks.highRise
   if (regime === 'highRise' && hr) {
     sFront = hr.roadM
-    roadNote = `High-rise / extra-large building: every part >= ${hr.roadM} m from the public road (MR-33 ข้อ 4) replaces the MR-55 road setback.`
+    roadNote = `High-rise / extra-large building: every part ≥ ${hr.roadM} m from the public road (MR-33 ข้อ 4) replaces the MR-55 road setback.`
     roadSources = ['mr33-clearance']
   } else {
     const r = roadSetbackM(rules, W)
@@ -267,8 +271,9 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
 
   const multiplier = ruleNumber(rules, 'mr55-height-road', 'multiplier')
   let hMax = multiplier * (W + sFront)
+  const roadHeightM = hMax
   const heightNotes = [
-    `Height at any point <= ${multiplier} x distance to the far side of the road: ${multiplier} x (${fmt(W)} m right-of-way + ${fmt(sFront, 2)} m front setback) = ${fmt(hMax)} m, applied as a flat cap over the whole footprint (MR-55 ข้อ 44; BMA ข้อ 49).`,
+    `Height at any point ≤ ${multiplier} x distance to the far side of the road: ${multiplier} x (${fmt(W)} m right-of-way + ${fmt(sFront, 2)} m front setback) = ${fmt(hMax)} m, applied as a flat cap over the whole footprint (MR-55 ข้อ 44; BMA ข้อ 49).`,
   ]
   const heightSources = ['mr55-height-road', 'height-measurement', 'floor-to-floor']
   if (typeRules.maxHeightM !== undefined && typeRules.maxHeightM < hMax) {
@@ -282,6 +287,9 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
   if (typeRules.maxStoreys !== undefined) floorsByHeight = Math.min(floorsByHeight, typeRules.maxStoreys)
   if (caps.heightBelowM !== undefined) floorsByHeight = Math.min(floorsByHeight, Math.ceil(caps.heightBelowM / f2f - EPS) - 1)
   floorsByHeight = Math.max(0, floorsByHeight)
+  const floorsByRoad = Math.floor(roadHeightM / f2f + EPS)
+  const floorsByType = Math.min(Math.floor(hMax / f2f + EPS), typeRules.maxStoreys ?? Infinity)
+  const heightCapBy: 'road' | 'type' = floorsByType < floorsByRoad ? 'type' : 'road'
   const builtHeightM = floorsByHeight * f2f
 
   // --- Boundary setback (standard regime depends on the height actually built; if FAR later
@@ -291,7 +299,7 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
   let boundarySources: string[]
   if (regime === 'highRise' && hr) {
     sBoundary = hr.boundaryM
-    boundaryNote = `High-rise / extra-large building: >= ${hr.boundaryM} m from every neighbouring boundary, above and below ground (MR-33 ข้อ 4); also the 6 m fire-engine road around the building (MR-33 ข้อ 3).`
+    boundaryNote = `High-rise / extra-large building: ≥ ${hr.boundaryM} m from every neighbouring boundary, above and below ground (MR-33 ข้อ 4); also the 6 m fire-engine road around the building (MR-33 ข้อ 3).`
     boundarySources = ['mr33-clearance', 'mr33-fire-road']
   } else {
     const b = boundarySetbackM(rules, typeRules, builtHeightM)
@@ -312,14 +320,14 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
     id: 'roadSetback',
     label: 'Road setback',
     geometry: toGeoMulti(roadStrip),
-    annotations: [roadNote, `Strip of ${fmt(sFront, 2)} m along the front edge removed (${fmt(A - (afterRoad.polygon ? polygonArea(afterRoad.polygon) : 0), 0)} m2).`],
+    annotations: [roadNote, `Strip of ${fmt(sFront, 2)} m along the front edge removed (${fmt(A - (afterRoad.polygon ? polygonArea(afterRoad.polygon) : 0), 0)} m²).`],
     numbers: { frontSetbackM: sFront, areaAfterM2: afterRoad.polygon ? polygonArea(afterRoad.polygon) : 0 },
     sources: roadSources,
   })
 
   const setbackArea = afterBoundary.polygon ? polygonArea(afterBoundary.polygon) : 0
-  const boundaryAnnotations = [boundaryNote, `Band of ${fmt(sBoundary, 2)} m along the other ${ctx.edgeCount - 1} edges removed; ${fmt(setbackArea, 0)} m2 remain (${fmt((100 * setbackArea) / A, 0)}% of the plot).`]
-  if (afterBoundary.pieces > 1) boundaryAnnotations.push(`Setbacks split the plot into ${afterBoundary.pieces} pieces; the largest is kept (${fmt(afterBoundary.droppedAreaM2, 0)} m2 dropped).`)
+  const boundaryAnnotations = [boundaryNote, `Band of ${fmt(sBoundary, 2)} m along the other ${ctx.edgeCount - 1} edges removed; ${fmt(setbackArea, 0)} m² remain (${fmt((100 * setbackArea) / A, 0)}% of the plot).`]
+  if (afterBoundary.pieces > 1) boundaryAnnotations.push(`Setbacks split the plot into ${afterBoundary.pieces} pieces; the largest is kept (${fmt(afterBoundary.droppedAreaM2, 0)} m² dropped).`)
   if (!afterBoundary.polygon) boundaryAnnotations.push('Setbacks consume the plot: nothing can be built within these offsets.')
   stages.push({
     id: 'boundarySetback',
@@ -344,7 +352,7 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
   // --- FAR.
   const gfaMax = far * A
   const farNotes = [
-    `Gross floor area <= FAR ${far} x ${fmt(A, 0)} m2 = ${fmt(gfaMax, 0)} m2 (BMA-CP ข้อ 17). All storeys count, parking and basements included; FAR bonuses (up to +20%) are not applied.`,
+    `Gross floor area ≤ FAR ${far} x ${fmt(A, 0)} m² = ${fmt(gfaMax, 0)} m² (BMA-CP ข้อ 17). All storeys count, parking and basements included; FAR bonuses (up to +20%) are not applied.`,
   ]
   if (regime === 'highRise') farNotes.push(`MR-33 ข้อ 5 cap of FAR ${ruleNumber(rules, 'mr33-far-cap', 'far')} does not bind (zone FAR ${far} is lower).`)
   if (caps.gfaCapNote) farNotes.push(`GFA cap: ${caps.gfaCapNote}`)
@@ -363,7 +371,7 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
   let footprintLimitedBy: FootprintLimit = 'setbacks'
   let shrinkM = 0
   const openNotes = [
-    `Open (unroofed) ground >= ${typeRules.openSpacePlotPercentMin}% of plot = ${fmt(requiredByPlot, 0)} m2 [BMA-BL-2544 ข้อ 52(1), MR-33 ข้อ 6], so footprint <= ${fmt(A - requiredByPlot, 0)} m2; and >= ${rules.zone.osrPercent}% of gross floor area [BMA-CP ข้อ 17(2)].`,
+    `Open (unroofed) ground ≥ ${typeRules.openSpacePlotPercentMin}% of plot = ${fmt(requiredByPlot, 0)} m² [BMA-BL-2544 ข้อ 52(1), MR-33 ข้อ 6], so footprint ≤ ${fmt(A - requiredByPlot, 0)} m²; and ≥ ${rules.zone.osrPercent}% of gross floor area [BMA-CP ข้อ 17(2)].`,
   ]
   const floorsFor = (F: number): number => {
     let k = Math.floor(gfaMax / F + EPS)
@@ -401,10 +409,10 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
     footprint = shrunk.polygon
     shrinkM = shrunk.offsetM
     openNotes.push(
-      `Setback footprint ${fmt(setbackArea, 0)} m2 exceeds the ${footprintLimitedBy === 'osr' ? `OSR limit (open space >= ${rules.zone.osrPercent}% of GFA)` : `${typeRules.openSpacePlotPercentMin}%-of-plot limit`} of ${fmt(targetF, 0)} m2, so it is shrunk by a further ${fmt(shrinkM, 2)} m all round to ${fmt(footprint ? polygonArea(footprint) : 0, 0)} m2.`,
+      `Setback footprint ${fmt(setbackArea, 0)} m² exceeds the ${footprintLimitedBy === 'osr' ? `OSR limit (open space ≥ ${rules.zone.osrPercent}% of GFA)` : `${typeRules.openSpacePlotPercentMin}%-of-plot limit`} of ${fmt(targetF, 0)} m², so it is shrunk by a further ${fmt(shrinkM, 2)} m all round to ${fmt(footprint ? polygonArea(footprint) : 0, 0)} m².`,
     )
   } else if (footprint) {
-    openNotes.push(`Setback footprint ${fmt(setbackArea, 0)} m2 already leaves ${fmt(A - setbackArea, 0)} m2 open (${fmt((100 * (A - setbackArea)) / A, 0)}% of the plot); no further shrink.`)
+    openNotes.push(`Setback footprint ${fmt(setbackArea, 0)} m² already leaves ${fmt(A - setbackArea, 0)} m² open (${fmt((100 * (A - setbackArea)) / A, 0)}% of the plot); no further shrink.`)
   }
   openNotes.push(`At least ${rules.zone.permeablePercentOfOpenSpace}% of the open space must be permeable planting ground.`)
   const shrinkBand = shrinkM > 0 ? bandPolygon(afterBoundary.polygon, footprint) : []
@@ -464,10 +472,10 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
       : null
 
   const envNotes = [
-    `Footprint ${fmt(F, 0)} m2 x ${maxFloors} floors x ${fmt(f2f, 2)} m = ${fmt(heightM)} m, GFA ${fmt(gfa, 0)} m2 (${fmt((100 * gfa) / gfaMax, 0)}% of the FAR cap). ${bindingRule === 'height' ? 'Height binds' : 'FAR binds'} (by height ${floorsByHeight} floors, by FAR ${floorsByFar}).`,
-    `Open space ${fmt(openSpace, 0)} m2 = ${fmt((100 * openSpace) / A, 0)}% of plot, OSR ${fmt((100 * openSpace) / Math.max(gfa, 1), 1)}% of GFA.`,
+    `Footprint ${fmt(F, 0)} m² x ${maxFloors} floors x ${fmt(f2f, 2)} m = ${fmt(heightM)} m, GFA ${fmt(gfa, 0)} m² (${fmt((100 * gfa) / gfaMax, 0)}% of the FAR cap). ${bindingRule === 'height' ? 'Height binds' : 'FAR binds'} (by height ${floorsByHeight} floors, by FAR ${floorsByFar}).`,
+    `Open space ${fmt(openSpace, 0)} m² = ${fmt((100 * openSpace) / A, 0)}% of plot, OSR ${fmt((100 * openSpace) / Math.max(gfa, 1), 1)}% of GFA.`,
   ]
-  if (parking) envNotes.push(`Indicative parking ${parking.spaces} spaces x ${ruleNumber(rules, 'bma-parking-indicative', 'm2PerSpaceInclAisles')} m2 = ${fmt(parking.areaM2, 0)} m2 inside the GFA; indicative saleable GFA ${fmt(parking.saleableGfaM2, 0)} m2.`)
+  if (parking) envNotes.push(`Indicative parking ${parking.spaces} spaces x ${ruleNumber(rules, 'bma-parking-indicative', 'm2PerSpaceInclAisles')} m² = ${fmt(parking.areaM2, 0)} m² inside the GFA; indicative saleable GFA ${fmt(parking.saleableGfaM2, 0)} m².`)
 
   stages.push({
     id: 'envelope',
@@ -498,6 +506,8 @@ function computeRegime(ctx: Ctx, regime: Regime, caps: Caps = {}): RegimeComputa
       openSpaceRequiredM2: required,
       coverage: F / A,
       bindingRule,
+      heightCapBy,
+      roadHeightM,
       footprintLimitedBy,
       parking,
     },
@@ -535,7 +545,7 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
           id: 'plot',
           label: 'Plot',
           geometry: plot,
-          annotations: [`Plot area ${fmt(A, 0)} m2. Pick the road-facing edge to run the setback, height and FAR rules.`],
+          annotations: [`Plot area ${fmt(A, 0)} m². Pick the road-facing edge to run the setback, height and FAR rules.`],
           numbers: { plotAreaM2: A },
           sources: [],
         },
@@ -590,8 +600,8 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
 
   if (canHighRise && (crossesHeight || crossesGfa)) {
     const why = [
-      crossesHeight ? `height ${fmt(e!.heightM)} m >= ${hrHeight} m` : null,
-      crossesGfa ? `GFA ${fmt(e!.gfaM2, 0)} m2 >= ${fmt(hrGfa, 0)} m2` : null,
+      crossesHeight ? `height ${fmt(e!.heightM)} m ≥ ${hrHeight} m` : null,
+      crossesGfa ? `GFA ${fmt(e!.gfaM2, 0)} m² ≥ ${fmt(hrGfa, 0)} m²` : null,
     ]
       .filter(Boolean)
       .join(' and ')
@@ -614,19 +624,19 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
           heightBelowM: hrHeight,
           gfaBelowM2: hrGfa,
           gfaCapNote: roadTooNarrow
-            ? `held under the ${fmt(hrGfa, 0)} m2 อาคารขนาดใหญ่พิเศษ threshold (MR-33 ข้อ 1) because a high-rise / extra-large building needs a road >= ${rowSmall} m and this road is ${fmt(W)} m (MR-33 ข้อ 2).`
-            : `held under the ${fmt(hrGfa, 0)} m2 อาคารขนาดใหญ่พิเศษ threshold (MR-33 ข้อ 1) because a high-rise / extra-large building needs >= ${minFrontage} m of plot side on the road and the front edge is ${fmt(frontLen)} m (MR-33 ข้อ 2).`,
+            ? `held under the ${fmt(hrGfa, 0)} m² อาคารขนาดใหญ่พิเศษ threshold (MR-33 ข้อ 1) because a high-rise / extra-large building needs a road ≥ ${rowSmall} m and this road is ${fmt(W)} m (MR-33 ข้อ 2).`
+            : `held under the ${fmt(hrGfa, 0)} m² อาคารขนาดใหญ่พิเศษ threshold (MR-33 ข้อ 1) because a high-rise / extra-large building needs ≥ ${minFrontage} m of plot side on the road and the front edge is ${fmt(frontLen)} m (MR-33 ข้อ 2).`,
         })
       } catch (err) {
         return geometryFailure(plot, A, err)
       }
       const why2 = [
-        roadTooNarrow ? `a public road with right-of-way >= ${rowSmall} m and this road is ${fmt(W)} m` : null,
-        frontTooShort ? `a plot side of >= ${minFrontage} m on that road and the front edge is ${fmt(frontLen)} m` : null,
+        roadTooNarrow ? `a public road with right-of-way ≥ ${rowSmall} m and this road is ${fmt(W)} m` : null,
+        frontTooShort ? `a plot side of ≥ ${minFrontage} m on that road and the front edge is ${fmt(frontLen)} m` : null,
       ]
         .filter(Boolean)
         .join(', and ')
-      const reason = `Standard setbacks would reach ${why}, but an อาคารสูง / อาคารขนาดใหญ่พิเศษ needs ${why2} (MR-33 ข้อ 2). The envelope is therefore held under ${hrHeight} m and ${fmt(hrGfa, 0)} m2 in the standard regime.`
+      const reason = `Standard setbacks would reach ${why}, but an อาคารสูง / อาคารขนาดใหญ่พิเศษ needs ${why2} (MR-33 ข้อ 2). The envelope is therefore held under ${hrHeight} m and ${fmt(hrGfa, 0)} m² in the standard regime.`
       return {
         ok: capped.envelope !== null,
         stages: capped.stages,
@@ -638,7 +648,7 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
         warnings: [
           ...warnings,
           ...(roadTooNarrow ? [`Road right-of-way ${fmt(W)} m < ${rowSmall} m: high-rise / extra-large buildings are not permitted on this plot (MR-33 ข้อ 2).`] : []),
-          ...(frontTooShort ? [`Front edge ${fmt(frontLen)} m < ${minFrontage} m: a high-rise / extra-large building needs >= ${minFrontage} m of plot side on the public road (MR-33 ข้อ 2), so it is not permitted here.`] : []),
+          ...(frontTooShort ? [`Front edge ${fmt(frontLen)} m < ${minFrontage} m: a high-rise / extra-large building needs ≥ ${minFrontage} m of plot side on the public road (MR-33 ข้อ 2), so it is not permitted here.`] : []),
         ],
         annotations: [reason],
       }
@@ -646,7 +656,7 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
 
     const hrCaps: Caps =
       W < rowBig - EPS
-        ? { gfaBelowM2: tierGfa + 1e-6, gfaCapNote: `a road under ${rowBig} m right-of-way (here ${fmt(W)} m) limits the building to ${fmt(tierGfa, 0)} m2 of gross floor area (MR-33 ข้อ 2).` }
+        ? { gfaBelowM2: tierGfa + 1e-6, gfaCapNote: `a road under ${rowBig} m right-of-way (here ${fmt(W)} m) limits the building to ${fmt(tierGfa, 0)} m² of gross floor area (MR-33 ข้อ 2).` }
         : {}
     let highRise: RegimeComputation
     let capped: RegimeComputation
@@ -655,7 +665,7 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
       capped = computeRegime(ctx, 'standard', {
         heightBelowM: hrHeight,
         gfaBelowM2: hrGfa,
-        gfaCapNote: `held under the ${fmt(hrGfa, 0)} m2 อาคารขนาดใหญ่พิเศษ threshold (MR-33 ข้อ 1) so the building stays in the standard regime.`,
+        gfaCapNote: `held under the ${fmt(hrGfa, 0)} m² อาคารขนาดใหญ่พิเศษ threshold (MR-33 ข้อ 1) so the building stays in the standard regime.`,
       })
     } catch (err) {
       return geometryFailure(plot, A, err)
@@ -664,8 +674,8 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
     // (larger-footprint) capped standard envelope is the right answer.
     if (!isHighRiseEnvelope(highRise.envelope, hrHeight, hrGfa)) {
       const reason = highRise.envelope
-        ? `Standard setbacks would reach ${why}, but with the 6 m MR-33 clearance the building drops back under both thresholds, so the standard regime held under ${hrHeight} m and ${fmt(hrGfa, 0)} m2 governs.`
-        : `Standard setbacks would reach ${why}, but the 6 m MR-33 clearance consumes this plot, so the only buildable option is to stay under ${hrHeight} m and ${fmt(hrGfa, 0)} m2 in the standard regime.`
+        ? `Standard setbacks would reach ${why}, but with the 6 m MR-33 clearance the building drops back under both thresholds, so the standard regime held under ${hrHeight} m and ${fmt(hrGfa, 0)} m² governs.`
+        : `Standard setbacks would reach ${why}, but the 6 m MR-33 clearance consumes this plot, so the only buildable option is to stay under ${hrHeight} m and ${fmt(hrGfa, 0)} m² in the standard regime.`
       return {
         ok: capped.envelope !== null,
         stages: capped.stages,
@@ -678,10 +688,10 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
         annotations: [reason],
       }
     }
-    const reason = `Standard-regime envelope reaches ${why}, so the building is อาคารสูง / อาคารขนาดใหญ่พิเศษ and MR-33 applies (6 m clearance all round, road right-of-way >= ${rowSmall} m with 12 m frontage, fire road). Recomputed in the high-rise regime.`
+    const reason = `Standard-regime envelope reaches ${why}, so the building is อาคารสูง / อาคารขนาดใหญ่พิเศษ and MR-33 applies (6 m clearance all round, road right-of-way ≥ ${rowSmall} m with 12 m frontage, fire road). Recomputed in the high-rise regime.`
     const hrWarnings = [...warnings]
     if (hrCaps.gfaCapNote && highRise.envelope && highRise.envelope.floorsByFar < highRise.envelope.floorsByHeight && highRise.envelope.gfaM2 >= tierGfa - highRise.envelope.footprintAreaM2) {
-      hrWarnings.push(`GFA capped at ${fmt(tierGfa, 0)} m2 because the road is under ${rowBig} m (MR-33 ข้อ 2); a wider road would allow the full FAR ${rules.zone.far}.`)
+      hrWarnings.push(`GFA capped at ${fmt(tierGfa, 0)} m² because the road is under ${rowBig} m (MR-33 ข้อ 2); a wider road would allow the full FAR ${rules.zone.far}.`)
     }
     return {
       ok: highRise.envelope !== null,
@@ -691,7 +701,7 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
       regime: 'highRise',
       regimeReason: reason,
       alternatives: [
-        summary(capped, 'Standard regime, kept under 23 m and 10,000 m2', 'What the plot yields if the building stays below both MR-33 thresholds (standard setbacks, fewer floors).'),
+        summary(capped, 'Standard regime, kept under 23 m and 10,000 m²', 'What the plot yields if the building stays below both MR-33 thresholds (standard setbacks, fewer floors).'),
         summary(standard, 'Standard setbacks, uncapped (not permitted)', `Standard setbacks with the full height cap would reach ${why}; shown only to explain the regime switch.`),
       ],
       warnings: hrWarnings,
@@ -701,7 +711,7 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
 
   if (!e) {
     const m = standard.metric
-    const consumed = `Nothing can be built: the ${fmt(m.frontSetbackM, 2)} m road setback and ${fmt(m.boundarySetbackM, 2)} m boundary setbacks${m.afterBoundarySetback ? ' plus the open-space rules' : ''} consume this ${fmt(A, 0)} m2 plot. Draw a wider plot or check the outline.`
+    const consumed = `Nothing can be built: the ${fmt(m.frontSetbackM, 2)} m road setback and ${fmt(m.boundarySetbackM, 2)} m boundary setbacks${m.afterBoundarySetback ? ' plus the open-space rules' : ''} consume this ${fmt(A, 0)} m² plot. Draw a wider plot or check the outline.`
     return {
       ok: false,
       stages: standard.stages,
@@ -715,7 +725,7 @@ export function runPipeline(inputs: PipelineInputs, rules: ZoneRules): PipelineR
     }
   }
   const reason = canHighRise
-    ? `Standard-regime envelope stays under ${hrHeight} m and ${fmt(hrGfa, 0)} m2 (height ${fmt(e?.heightM ?? 0)} m, GFA ${fmt(e?.gfaM2 ?? 0, 0)} m2), so MR-33 does not apply.`
+    ? `Standard-regime envelope stays under ${hrHeight} m and ${fmt(hrGfa, 0)} m² (height ${fmt(e?.heightM ?? 0)} m, GFA ${fmt(e?.gfaM2 ?? 0, 0)} m²), so MR-33 does not apply.`
     : `${typeRules.label.split(' (')[0]}: standard regime only (max ${typeRules.maxStoreys ?? '-'} storeys, ${typeRules.maxHeightM ?? '-'} m).`
   return {
     ok: standard.envelope !== null,
@@ -742,7 +752,7 @@ function geometryFailure(plot: Polygon, areaM2: number, err: unknown): PipelineR
   return {
     ...EMPTY_PIPELINE_RESULT,
     stages: [
-      { id: 'plot', label: 'Plot', geometry: plot, annotations: [`Plot area ${fmt(areaM2, 0)} m2.`], numbers: { plotAreaM2: areaM2 }, sources: [] },
+      { id: 'plot', label: 'Plot', geometry: plot, annotations: [`Plot area ${fmt(areaM2, 0)} m².`], numbers: { plotAreaM2: areaM2 }, sources: [] },
       { id: 'envelope', label: 'Envelope', geometry: null, annotations: [`Geometry engine could not offset this outline (${message}). Try moving a vertex slightly.`], numbers: {}, sources: [] },
     ],
     warnings: [`Geometry engine could not offset this outline: ${message}`],

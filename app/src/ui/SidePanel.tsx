@@ -54,6 +54,8 @@ export function SidePanel() {
   const roadInfo = useAppStore((s) => s.roadInfo)
   const setRoadWidth = useAppStore((s) => s.setRoadWidth)
   const buildingType = useAppStore((s) => s.buildingType)
+  const typeRules = ZONE_RULES.buildingTypes[buildingType]
+  const typeCapLabel = `low-rise cap: ${[typeRules?.maxStoreys !== undefined ? `${typeRules.maxStoreys} storeys` : null, typeRules?.maxHeightM !== undefined ? `${typeRules.maxHeightM} m` : null].filter(Boolean).join(' / ')}`
   const setBuildingType = useAppStore((s) => s.setBuildingType)
   const floorToFloorM = useAppStore((s) => s.floorToFloorM)
   const setFloorToFloor = useAppStore((s) => s.setFloorToFloor)
@@ -282,7 +284,12 @@ export function SidePanel() {
                   sub={`${Math.round(env.coverage * 100)}% coverage · limited by ${env.footprintLimitedBy === 'setbacks' ? 'setbacks' : env.footprintLimitedBy === 'osr' ? 'OSR 4%' : '30% open space'}`}
                   ids={stage('openSpace')?.sources ?? []}
                 />
-                <Row label="Height cap" value={`${n1(env.maxHeightM)} m`} sub="2 x (road + front setback)" ids={['mr55-height-road']} />
+                <Row
+                  label="Height cap"
+                  value={`${n1(env.maxHeightM)} m`}
+                  sub={env.heightCapBy === 'type' ? `${typeCapLabel} · 2 × (road + front setback) allows ${n1(env.roadHeightM)} m` : '2 × (road + front setback)'}
+                  ids={env.heightCapBy === 'type' ? ['mr55-road-setback', 'mr55-height-road'] : ['mr55-height-road']}
+                />
                 <Row
                   label="Max floors"
                   value={`${env.maxFloors}`}
@@ -308,7 +315,7 @@ export function SidePanel() {
                 <tr>
                   <th>Binding rule</th>
                   <td colSpan={2}>
-                    <span className={`badge ${env.bindingRule}`}>{env.bindingRule === 'height' ? 'Height (2 x road)' : env.bindingRule === 'far' ? 'FAR' : 'Footprint'}</span>
+                    <span className={`badge ${env.bindingRule}`}>{env.bindingRule === 'height' ? (env.heightCapBy === 'type' ? `Height (${typeCapLabel})` : 'Height (2 × road)') : env.bindingRule === 'far' ? 'FAR' : 'Footprint'}</span>
                   </td>
                 </tr>
                 {env.parking && (

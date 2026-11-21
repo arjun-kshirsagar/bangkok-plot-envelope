@@ -113,9 +113,9 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   rows.push({
     ruleId: pipeline.regime === 'highRise' ? 'mr33-clearance' : 'mr55-road-setback',
     label: 'Road setback',
-    requirement: `Building line >= ${m(metric.frontSetbackM)} from the road edge (front edge).`,
+    requirement: `Building line ≥ ${m(metric.frontSetbackM)} from the road edge (front edge).`,
     actual: m(frontDist),
-    allowed: `>= ${m(metric.frontSetbackM)}`,
+    allowed: `≥ ${m(metric.frontSetbackM)}`,
     pass: containedWithin(design.footprint, metric.afterRoadSetback),
     source: src(pipeline.regime === 'highRise' ? 'mr33-clearance' : 'mr55-road-setback'),
   })
@@ -132,9 +132,9 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   rows.push({
     ruleId: pipeline.regime === 'highRise' ? 'mr33-clearance' : 'mr55-boundary-openings',
     label: 'Boundary setback',
-    requirement: `Walls >= ${m(boundaryReq)} from every neighbouring boundary${pipeline.regime === 'highRise' ? '' : ` (at this design's height of ${m(design.heightM, 1)})`}.`,
+    requirement: `Walls ≥ ${m(boundaryReq)} from every neighbouring boundary${pipeline.regime === 'highRise' ? '' : ` (at this design's height of ${m(design.heightM, 1)})`}.`,
     actual: Number.isFinite(boundaryDist) ? m(boundaryDist) : '—',
-    allowed: `>= ${m(boundaryReq)}`,
+    allowed: `≥ ${m(boundaryReq)}`,
     pass: containedWithin(design.footprint, metric.afterBoundarySetback) && boundaryDist >= boundaryReq - CONTAINMENT_TOLERANCE_M,
     source: src(pipeline.regime === 'highRise' ? 'mr33-clearance' : 'mr55-boundary-openings'),
     note: boundaryRaised ? `The envelope was computed for ${m(metric.boundarySetbackM)} at its own height; at ${m(design.heightM, 1)} this design needs ${m(boundaryReq)}.` : undefined,
@@ -147,14 +147,14 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
     rows.push({
       ruleId: 'mr33-clearance',
       label: 'High-rise 6 m clearance',
-      requirement: `Every part of an อาคารสูง / ขนาดใหญ่พิเศษ >= ${six} m from every boundary and road.`,
+      requirement: `Every part of an อาคารสูง / ขนาดใหญ่พิเศษ ≥ ${six} m from every boundary and road.`,
       actual: m(minAll),
-      allowed: `>= ${six} m`,
+      allowed: `≥ ${six} m`,
       pass: minAll >= six - CONTAINMENT_TOLERANCE_M,
       source: src('mr33-clearance'),
       note:
         pipeline.regime === 'standard'
-          ? `This design reaches ${design.heightM >= hrHeight - EPS ? `${m(design.heightM, 1)} (>= ${hrHeight} m)` : `${m2(design.gfaM2)} (>= ${m2(hrGfa)})`}, so it pushes itself into MR-33 although the envelope was computed in the standard regime.`
+          ? `This design reaches ${design.heightM >= hrHeight - EPS ? `${m(design.heightM, 1)} (≥ ${hrHeight} m)` : `${m2(design.gfaM2)} (≥ ${m2(hrGfa)})`}, so it pushes itself into MR-33 although the envelope was computed in the standard regime.`
           : undefined,
     })
   }
@@ -163,9 +163,12 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   rows.push({
     ruleId: 'mr55-height-road',
     label: 'Height (2 x road rule)',
-    requirement: `Height <= 2 x (right-of-way + front setback) = ${m(env.maxHeightM, 1)}.`,
+    requirement:
+      env.heightCapBy === 'type'
+        ? `Height ≤ ${m(env.maxHeightM, 1)}: the building type's own cap binds (2 x (right-of-way + front setback) allows ${m(env.roadHeightM, 1)}).`
+        : `Height ≤ 2 x (right-of-way + front setback) = ${m(env.maxHeightM, 1)}.`,
     actual: `${m(design.heightM, 1)} (${design.floors} fl)`,
-    allowed: `<= ${m(env.maxHeightM, 1)}`,
+    allowed: `≤ ${m(env.maxHeightM, 1)}`,
     pass: design.heightM <= env.maxHeightM + EPS,
     source: src('mr55-height-road'),
   })
@@ -180,10 +183,10 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
     ruleId: capBinds ? capRule : 'zone-far',
     label: capBinds ? `GFA cap (FAR ${rules.zone.far}, ${capIsHold ? 'held under 10,000 m²' : 'road tier'})` : `FAR ${rules.zone.far}`,
     requirement: capBinds
-      ? `Gross floor area <= ${rules.zone.far} x plot area = ${m2(env.maxGfaM2)}, and <= ${m2(env.gfaCapM2)}: ${env.gfaCapNote ?? (capIsHold ? 'held under the extra-large threshold.' : 'MR-33 road tier.')}`
-      : `Gross floor area <= ${rules.zone.far} x plot area = ${m2(env.maxGfaM2)}.`,
+      ? `Gross floor area ≤ ${rules.zone.far} x plot area = ${m2(env.maxGfaM2)}, and ≤ ${m2(env.gfaCapM2)}: ${env.gfaCapNote ?? (capIsHold ? 'held under the extra-large threshold.' : 'MR-33 road tier.')}`
+      : `Gross floor area ≤ ${rules.zone.far} x plot area = ${m2(env.maxGfaM2)}.`,
     actual: m2(design.gfaM2),
-    allowed: `<= ${m2(env.gfaCapM2)}`,
+    allowed: `≤ ${m2(env.gfaCapM2)}`,
     pass: design.gfaM2 <= env.gfaCapM2 + 0.5,
     source: capBinds ? `${src('zone-far')}; ${src(capRule)}` : src('zone-far'),
   })
@@ -193,9 +196,9 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   rows.push({
     ruleId: 'bcl-open-space-plot',
     label: `Open space ${typeRules.openSpacePlotPercentMin}% of plot`,
-    requirement: `Unroofed ground >= ${typeRules.openSpacePlotPercentMin}% of the plot (${m2(openFrac * A)}).`,
+    requirement: `Unroofed ground ≥ ${typeRules.openSpacePlotPercentMin}% of the plot (${m2(openFrac * A)}).`,
     actual: `${m2(design.openSpaceM2)} (${Math.round((100 * design.openSpaceM2) / A)}%)`,
-    allowed: `>= ${m2(openFrac * A)}`,
+    allowed: `≥ ${m2(openFrac * A)}`,
     pass: design.openSpaceM2 >= openFrac * A - 0.5,
     source: src('bcl-open-space-plot'),
   })
@@ -205,9 +208,9 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   rows.push({
     ruleId: 'zone-osr',
     label: `OSR ${rules.zone.osrPercent}% of GFA`,
-    requirement: `Open space >= ${rules.zone.osrPercent}% of this design's gross floor area.`,
+    requirement: `Open space ≥ ${rules.zone.osrPercent}% of this design's gross floor area.`,
     actual: `${m2(design.openSpaceM2)} (${design.gfaM2 > 0 ? ((100 * design.openSpaceM2) / design.gfaM2).toFixed(1) : '—'}%)`,
-    allowed: `>= ${m2(osrFrac * design.gfaM2)}`,
+    allowed: `≥ ${m2(osrFrac * design.gfaM2)}`,
     pass: design.openSpaceM2 >= osrFrac * design.gfaM2 - 0.5,
     source: src('zone-osr'),
   })
@@ -221,9 +224,9 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
     rows.push({
       ruleId: 'mr33-road-access',
       label: 'High-rise road access',
-      requirement: `Plot side >= ${minFrontage} m on a public road with right-of-way >= ${minRow} m${bigTier ? ' (GFA > 30,000 m2)' : ''}, continuing to another road of that width.`,
+      requirement: `Plot side ≥ ${minFrontage} m on a public road with right-of-way ≥ ${minRow} m${bigTier ? ' (GFA > 30,000 m²)' : ''}, continuing to another road of that width.`,
       actual: `road ${m(inputs.roadWidthM, 1)}, frontage ${m(frontLen, 1)}`,
-      allowed: `road >= ${minRow} m, frontage >= ${minFrontage} m`,
+      allowed: `road ≥ ${minRow} m, frontage ≥ ${minFrontage} m`,
       pass: inputs.roadWidthM >= minRow - EPS && frontLen >= minFrontage - EPS,
       source: src('mr33-road-access'),
       note: 'Road continuity to another public road of the same width is attested by the user, not computed.',
@@ -240,26 +243,26 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
     rows.push({
       ruleId: 'bma-frontage',
       label: v.fronting ? 'Fronting the public way' : 'Front open space (not fronting)',
-      requirement: `ข้อ 53: road-facing building line > 1/${Math.round(1 / fp.minFraction)} of the outer perimeter and <= ${fp.maxDistM} m from the public way; otherwise ข้อ 52(6): a front open space >= ${v.needDepthM} m deep, continuous (with joined side space) for >= 1/${Math.round(1 / fp.openFraction)} of the perimeter, reaching the public way by a >= ${fp.internalRoadM} m internal road.`,
+      requirement: `ข้อ 53: road-facing building line > 1/${Math.round(1 / fp.minFraction)} of the outer perimeter and ≤ ${fp.maxDistM} m from the public way; otherwise ข้อ 52(6): a front open space ≥ ${v.needDepthM} m deep, continuous (with joined side space) for ≥ 1/${Math.round(1 / fp.openFraction)} of the perimeter, reaching the public way by a ≥ ${fp.internalRoadM} m internal road.`,
       actual: v.fronting
         ? `fronts: line ${m(fr.lineM, 1)} of ${m(fr.perimeterM, 1)} perimeter, ${m(fr.distanceM, 1)} from the road`
         : `not fronting (line ${m(fr.lineM, 1)}); open band ${m(o?.bandM ?? 0, 1)} x ${v.needDepthM} m deep, ${o?.connected ? 'connected' : o && o.bandM >= o.needBandM ? 'not connected to the road' : 'too short'}`,
       allowed: v.fronting
         ? `line > ${m(fp.minFraction * fr.perimeterM, 1)} within ${fp.maxDistM} m`
-        : `band >= ${m(o?.needBandM ?? 0, 1)}, connected by >= ${fp.internalRoadM} m`,
+        : `band ≥ ${m(o?.needBandM ?? 0, 1)}, connected by ≥ ${fp.internalRoadM} m`,
       pass: v.pass,
       source: src('bma-frontage'),
       note: v.fronting
         ? undefined
         : o?.pass
-          ? `${notFronting} Uses the ข้อ 52(6) front open space: ${v.needDepthM} m band, ${m(o.bandM, 1)} along the building (needs >= ${m(o.needBandM, 1)}), connected ${o.connection}.`
-          : `${notFronting} No ข้อ 52(6) front open space either: ${v.needDepthM} m band ${m(o?.bandM ?? 0, 1)} long (needs >= ${m(o?.needBandM ?? 0, 1)})${o && o.bandM >= o.needBandM ? `, and it does not reach the road through >= ${fp.internalRoadM} m of open plot` : ''}.`,
+          ? `${notFronting} Uses the ข้อ 52(6) front open space: ${v.needDepthM} m band, ${m(o.bandM, 1)} along the building (needs ≥ ${m(o.needBandM, 1)}), connected ${o.connection}.`
+          : `${notFronting} No ข้อ 52(6) front open space either: ${v.needDepthM} m band ${m(o?.bandM ?? 0, 1)} long (needs ≥ ${m(o?.needBandM ?? 0, 1)})${o && o.bandM >= o.needBandM ? `, and it does not reach the road through ≥ ${fp.internalRoadM} m of open plot` : ''}.`,
     })
   } else {
     rows.push({
       ruleId: 'bma-frontage',
       label: 'Fronting the public way',
-      requirement: `Applies to buildings > ${fp.triggerStoreys} storeys or > ${fp.triggerHeightM} m; residential <= ${fp.exemptStoreys} storeys exempt.`,
+      requirement: `Applies to buildings > ${fp.triggerStoreys} storeys or > ${fp.triggerHeightM} m; residential ≤ ${fp.exemptStoreys} storeys exempt.`,
       actual: `${design.floors} floors, ${m(design.heightM, 1)}`,
       allowed: 'exempt',
       pass: true,
@@ -275,9 +278,9 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
     rows.push({
       ruleId: 'lowrise-limits',
       label: 'Low-rise definition',
-      requirement: `Low-rise residential: <= ${maxStoreys} storeys and <= ${maxH} m.`,
+      requirement: `Low-rise residential: ≤ ${maxStoreys} storeys and ≤ ${maxH} m.`,
       actual: `${design.floors} floors, ${m(design.heightM, 1)}`,
-      allowed: `<= ${maxStoreys} floors, <= ${maxH} m`,
+      allowed: `≤ ${maxStoreys} floors, ≤ ${maxH} m`,
       pass: design.floors <= maxStoreys && design.heightM <= maxH + EPS,
       source: `${typeRules.label}; BMA-BL-2544 ข้อ 50 exemption (rules JSON buildingTypes.lowRiseResidential)`,
     })
@@ -288,9 +291,9 @@ export function evaluateChecks(design: Design, pipeline: PipelineResult, rules: 
   rows.push({
     ruleId: 'floor-to-floor',
     label: 'Floor-to-floor minimum',
-    requirement: `Dwelling floor-to-floor >= ${legalMin} m.`,
+    requirement: `Dwelling floor-to-floor ≥ ${legalMin} m.`,
     actual: m(design.floorToFloorM, 2),
-    allowed: `>= ${legalMin} m`,
+    allowed: `≥ ${legalMin} m`,
     pass: design.floorToFloorM >= legalMin - EPS,
     source: src('floor-to-floor'),
   })

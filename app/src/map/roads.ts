@@ -11,11 +11,12 @@ import { layerIdsForSourceLayers } from './mapStyle'
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
 ]
 const TILE_QUERY_RADIUS_PX = 30
 const OVERPASS_RADIUS_M = 30
 /** Per-endpoint budget; Overpass mirrors are often slow or return 5xx. */
-const OVERPASS_TIMEOUT_MS = 8000
+const OVERPASS_TIMEOUT_MS = 6000
 
 /** OpenMapTiles `class` values that are roads (not paths, tracks or rail). */
 const TILE_ROAD_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service'])
@@ -179,7 +180,7 @@ export async function resolveRoadWidth(
     return {
       widthM: null,
       roadInfo: tileLabel,
-      source: { kind: 'default', detail: 'Overpass unreachable; default 12 m kept. Edit if known.' },
+      source: { kind: 'default', detail: 'OSM road-width lookup unavailable; 12 m default kept. Edit if known.' },
     }
   }
 }

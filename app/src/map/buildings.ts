@@ -11,6 +11,7 @@ import { BUILDING_3D_LAYER_ID } from './mapStyle'
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
 ]
 const OVERPASS_SOURCE_ID = 'osm-buildings-overpass'
 const OVERPASS_LAYER_ID = 'osm-buildings-overpass-3d'

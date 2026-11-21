@@ -967,6 +967,11 @@ table.checklist td.status {
   background: rgba(15, 23, 42, 0.7);
 }
 
+/* Keep the attribution clear of the side panel (392 px wide, 12 px inset). */
+.maplibregl-ctrl-bottom-right {
+  right: 416px;
+}
+
 .maplibregl-ctrl-attrib a {
   color: var(--muted);
 }
